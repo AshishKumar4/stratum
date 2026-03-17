@@ -11,7 +11,9 @@ images/
 *.wasm
 *.o
 *.bin
+!bios/*.bin
 *.img
+*.iso
 *.fixture
 *.fuse_hidden*
 *.DS_Store
@@ -26,3 +28,12 @@ src/rust/gen/jit.rs
 src/rust/gen/jit0f.rs
 bios/seabios
 bench-results
+
+# Stratum
+bun.lock
+stratum/worker/node_modules/
+stratum/worker/.wrangler/
+stratum/worker/bun.lock
+.env
+.dev.vars
+target/

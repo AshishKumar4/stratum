@@ -15,6 +15,10 @@ use crate::cpu::apic;
 use crate::cpu::cpu::{
     handle_irqs, reg128, APIC_MEM_ADDRESS, APIC_MEM_SIZE, IOAPIC_MEM_ADDRESS, IOAPIC_MEM_SIZE,
 };
+
+// AHCI memory addresses (from Phase 4 design)
+pub const AHCI_MEM_ADDRESS: u32 = 0xFEBF0000;
+pub const AHCI_MEM_SIZE: u32 = 0x1000;
 use crate::cpu::global_pointers::memory_size;
 use crate::cpu::ioapic;
 use crate::cpu::vga;
@@ -92,6 +96,9 @@ pub fn read8(addr: u32) -> i32 {
         else if addr >= IOAPIC_MEM_ADDRESS && addr < IOAPIC_MEM_ADDRESS + IOAPIC_MEM_SIZE {
             ioapic::read32((addr - IOAPIC_MEM_ADDRESS) & !3) as i32 >> 8 * (addr & 3) & 0xFF
         }
+        else if addr >= AHCI_MEM_ADDRESS && addr < AHCI_MEM_ADDRESS + AHCI_MEM_SIZE {
+            unsafe { ext::mmap_read8(addr) }
+        }
         else {
             unsafe { ext::mmap_read8(addr) }
         }
@@ -136,6 +143,9 @@ pub fn read32s(addr: u32) -> i32 {
         }
         else if addr >= IOAPIC_MEM_ADDRESS && addr < IOAPIC_MEM_ADDRESS + IOAPIC_MEM_SIZE {
             ioapic::read32(addr - IOAPIC_MEM_ADDRESS) as i32
+        }
+        else if addr >= AHCI_MEM_ADDRESS && addr < AHCI_MEM_ADDRESS + AHCI_MEM_SIZE {
+            unsafe { ext::mmap_read32(addr) }
         }
         else {
             unsafe { ext::mmap_read32(addr) }
@@ -297,6 +307,10 @@ pub unsafe fn mmap_write32(addr: u32, value: i32) {
     }
     else if addr >= IOAPIC_MEM_ADDRESS && addr < IOAPIC_MEM_ADDRESS + IOAPIC_MEM_SIZE {
         ioapic::write32(addr - IOAPIC_MEM_ADDRESS, value as u32);
+        handle_irqs();
+    }
+    else if addr >= AHCI_MEM_ADDRESS && addr < AHCI_MEM_ADDRESS + AHCI_MEM_SIZE {
+        ext::mmap_write32(addr, value);
         handle_irqs();
     }
     else {

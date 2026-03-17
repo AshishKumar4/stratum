@@ -28,6 +28,8 @@ import { read_elf } from "./elf.js";
 
 import { FloppyController } from "./floppy.js";
 import { IDEController } from "./ide.js";
+import { register_lapic_mmio } from "./lapic_stub.js";
+import { AHCIController } from "./ahci.js";
 import { VirtioNet } from "./virtio_net.js";
 import { VGAScreen } from "./vga.js";
 import { VirtioBalloon } from "./virtio_balloon.js";
@@ -430,6 +432,19 @@ CPU.prototype.wasm_patch = function()
     this.zstd_free_ctx = get_import("zstd_free_ctx");
     this.zstd_read = get_import("zstd_read");
     this.zstd_read_free = get_import("zstd_read_free");
+
+    // SMP/APIC extensions (optional — present only when built with SMP modules)
+    this.smp_init          = get_optional_import("smp_init");
+    this.smp_cpu_loop      = get_optional_import("smp_cpu_loop");
+    this.smp_is_enabled    = get_optional_import("smp_is_enabled");
+    this.smp_cpu_count     = get_optional_import("smp_cpu_count");
+    this.smp_start_ap      = get_optional_import("smp_start_ap");
+    this.apic_mmio_read    = get_optional_import("apic_mmio_read");
+    this.apic_mmio_write   = get_optional_import("apic_mmio_write");
+    this.ioapic_mmio_read  = get_optional_import("ioapic_mmio_read");
+    this.ioapic_mmio_write = get_optional_import("ioapic_mmio_write");
+    this.ioapic_set_irq    = get_optional_import("ioapic_set_irq");
+    this.set_current_cpu_id = get_optional_import("set_current_cpu_id");
 };
 
 CPU.prototype.jit_force_generate = function(addr)
@@ -565,11 +580,13 @@ CPU.prototype.get_state = function()
     state[83] = this.devices.virtio_net;
     state[84] = this.devices.virtio_balloon;
 
-    // state[85] new ide set above
+     // state[85] new ide set above
+     state[86] = this.last_result;
+     state[87] = this.fpu_status_word;
+     state[88] = this.mxcsr;
 
-    state[86] = this.last_result;
-    state[87] = this.fpu_status_word;
-    state[88] = this.mxcsr;
+     // state[89] — AHCI controller (must not collide with slots 86–88)
+     state[89] = this.devices.ahci;
 
     return state;
 };
@@ -738,6 +755,9 @@ CPU.prototype.set_state = function(state)
     this.devices.virtio_console && this.devices.virtio_console.set_state(state[82]);
     this.devices.virtio_net && this.devices.virtio_net.set_state(state[83]);
     this.devices.virtio_balloon && this.devices.virtio_balloon.set_state(state[84]);
+    
+     // Restore AHCI controller state (slot 89)
+     this.devices.ahci && this.devices.ahci.set_state(state[89]);
 
     this.fw_value = state[62];
 
@@ -1006,7 +1026,61 @@ CPU.prototype.init = function(settings, device_bus)
 
     this.reset_cpu();
 
+    // Initialise SMP/APIC if the WASM was built with the SMP extension modules.
+    // cpu_count defaults to 1 (BSP only); set settings.cpu_count > 1 to enable SMP.
+    if(this.smp_init)
+    {
+        const cpu_count = (settings.cpu_count | 0) || 1;
+        this.smp_init(cpu_count);
+        dbg_log("SMP initialised: " + cpu_count + " CPU(s)");
+    }
+
     var io = new IO(this);
+
+    // Register LAPIC MMIO region (0xFEE00000, one MMAP_BLOCK_SIZE = 128KB) when the APIC
+    // extension is present.  Without this, guest writes to LAPIC registers crash the
+    // emulator with "undefined is not a function" because no MMIO handler is mapped there.
+    // mmap_register requires addr/size aligned to MMAP_BLOCK_SIZE (0x20000 = 128KB).
+    if(this.apic_mmio_read && this.apic_mmio_write)
+    {
+        const apic_mmio_read  = this.apic_mmio_read;
+        const apic_mmio_write = this.apic_mmio_write;
+        io.mmap_register(
+            0xFEE00000, 0x20000,
+            // read8: byte reads from LAPIC — extract the relevant byte from the 32-bit reg
+            function(addr) { return apic_mmio_read(addr & ~3) >>> (8 * (addr & 3)) & 0xFF; },
+            // write8: not used for LAPIC (registers are 32-bit only), ignore
+            function(addr, value) {},
+            // read32: direct 32-bit access
+            function(addr) { return apic_mmio_read(addr) | 0; },
+            // write32: direct 32-bit access
+            function(addr, value) { apic_mmio_write(addr, value); }
+        );
+        dbg_log("LAPIC MMIO registered at 0xFEE00000");
+    }
+    else
+    {
+        // Fallback: pure-JS LAPIC stub that reads/writes directly into the Rust
+        // Apic struct in WASM linear memory.  The Rust apic_timer() + handle_irqs()
+        // path handles timer expiry and interrupt injection — we just bridge the
+        // MMIO gap so guest register writes actually reach the struct.
+        register_lapic_mmio(this, io);
+    }
+
+    // Register I/O APIC MMIO region (0xFEC00000, 128KB) when the IOAPIC extension is present.
+    if(this.ioapic_mmio_read && this.ioapic_mmio_write)
+    {
+        const ioapic_mmio_read  = this.ioapic_mmio_read;
+        const ioapic_mmio_write = this.ioapic_mmio_write;
+        io.mmap_register(
+            0xFEC00000, 0x20000,
+            function(addr) { return ioapic_mmio_read(addr & ~3) >>> (8 * (addr & 3)) & 0xFF; },
+            function(addr, value) {},
+            function(addr) { return ioapic_mmio_read(addr) | 0; },
+            function(addr, value) { ioapic_mmio_write(addr, value); }
+        );
+        dbg_log("I/O APIC MMIO registered at 0xFEC00000");
+    }
     this.io = io;
 
     this.bios.main = settings.bios;
@@ -1203,6 +1277,9 @@ CPU.prototype.init = function(settings, device_bus)
         ide_config[1][0] = { is_cdrom: true, buffer: settings.cdrom };
         this.devices.ide = new IDEController(this, device_bus, ide_config);
         this.devices.cdrom = this.devices.ide.secondary.master;
+        
+        // Initialize AHCI controller for modern disk interface
+        this.devices.ahci = new AHCIController(this, device_bus);
 
         this.devices.pit = new PIT(this, device_bus);
 
@@ -1911,6 +1988,21 @@ CPU.prototype.run_hardware_timers = function(acpi_enabled, now)
     {
         acpi_time = this.devices.acpi.timer(now);
         apic_time = this.apic_timer(now);
+    }
+
+    // SMP cooperative round-robin: after BSP runs its slice, tick each started AP.
+    // set_current_cpu_id() tells the Rust APIC MMIO which CPU is "active" so that
+    // get_current_cpu_id() returns the correct value during each AP slice.
+    if(this.smp_cpu_loop && this.smp_cpu_count && this.smp_is_enabled && this.smp_is_enabled())
+    {
+        const cpu_count = this.smp_cpu_count();
+        for(let cpu_id = 1; cpu_id < cpu_count; cpu_id++)
+        {
+            if(this.set_current_cpu_id) this.set_current_cpu_id(cpu_id);
+            this.smp_cpu_loop(cpu_id);
+        }
+        // Restore current CPU ID to BSP (0) after AP slices
+        if(this.set_current_cpu_id) this.set_current_cpu_id(0);
     }
 
     return Math.min(pit_time, rtc_time, acpi_time, apic_time);

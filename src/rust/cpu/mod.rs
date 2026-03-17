@@ -1,12 +1,16 @@
 pub mod apic;
+pub mod apic_mmio;
+pub mod apic_smp;
 pub mod arith;
 pub mod call_indirect;
 pub mod cpu;
+pub mod cpu_smp;
 pub mod fpu;
 pub mod global_pointers;
 pub mod instructions;
 pub mod instructions_0f;
 pub mod ioapic;
+pub mod ioapic_smp;
 pub mod memory;
 pub mod misc_instr;
 pub mod modrm;

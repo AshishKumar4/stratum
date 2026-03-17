@@ -1,11 +1,12 @@
 {
-  "name": "v86",
-  "version": "0.5",
+  "name": "stratum",
+  "version": "0.1.0",
   "license": "BSD-2-Clause",
-  "description": "x86 PC emulator and x86-to-wasm JIT, running in the browser",
-  "homepage": "https://copy.sh/v86/",
+  "description": "v86 fork with AHCI, APIC/SMP, and ACPI extensions for running bare-metal OS kernels",
+  "homepage": "https://github.com/AshishKumar4/stratum",
   "files": [
     "Readme.md",
+    "STRATUM.md",
     "LICENSE",
     "v86.d.ts",
     "build/libv86*.js",
@@ -15,6 +16,9 @@
   ],
   "main": "build/libv86.mjs",
   "types": "v86.d.ts",
-  "repository": "github:copy/v86",
-  "type": "module"
+  "repository": "github:AshishKumar4/stratum",
+  "type": "module",
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
 }

@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stratum — v86 Demo</title>
+  <script src="/libv86.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:      #0d1117;
+      --surface: #161b22;
+      --border:  #30363d;
+      --text:    #e6edf3;
+      --muted:   #8b949e;
+      --green:   #3fb950;
+      --blue:    #58a6ff;
+      --orange:  #f0883e;
+      --purple:  #bc8cff;
+      --red:     #ff7b72;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+      font-size: 13px;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      padding: 10px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo { font-size: 15px; font-weight: 700; color: var(--blue); }
+    .badge {
+      font-size: 10px; padding: 2px 7px; border-radius: 20px;
+      background: rgba(63,185,80,.12); color: var(--green);
+      border: 1px solid rgba(63,185,80,.3);
+    }
+    .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+    #status-dot {
+      width: 8px; height: 8px; border-radius: 50%; background: var(--muted);
+      transition: background .3s;
+    }
+    #status-dot.running { background: var(--green); box-shadow: 0 0 6px var(--green); }
+    #status-dot.loading { background: var(--orange); animation: pulse 1s ease-in-out infinite; }
+    #status-dot.error   { background: var(--red); }
+    @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.3; } }
+    #status-text { font-size: 11px; color: var(--muted); min-width: 120px; }
+
+    /* ── OS Picker ── */
+    .os-bar {
+      padding: 8px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+    .os-label { font-size: 11px; color: var(--muted); margin-right: 4px; }
+    .os-btn {
+      padding: 5px 14px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: var(--bg);
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12px;
+      cursor: pointer;
+      transition: border-color .15s, color .15s, background .15s;
+    }
+    .os-btn:hover { border-color: var(--blue); color: var(--blue); }
+    .os-btn.active {
+      border-color: var(--blue);
+      background: rgba(88,166,255,.12);
+      color: var(--blue);
+    }
+    .os-btn.kolibri.active { border-color: var(--orange); background: rgba(240,136,62,.12); color: var(--orange); }
+    .os-btn.aqeous.active  { border-color: var(--purple); background: rgba(188,140,255,.12); color: var(--purple); }
+    .ctrl-btn {
+      padding: 5px 12px;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--muted);
+      font-family: inherit;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .ctrl-btn:hover { border-color: var(--muted); color: var(--text); }
+    .ctrl-btn.danger:hover { border-color: var(--red); color: var(--red); }
+    .sep { width: 1px; height: 18px; background: var(--border); margin: 0 4px; }
+
+    /* ── Main layout ── */
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 360px;
+      overflow: hidden;
+    }
+
+    /* ── Screen panel ── */
+    .screen-panel {
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .panel-hdr {
+      padding: 6px 14px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .panel-hdr .tag {
+      padding: 1px 6px; border-radius: 4px; font-size: 10px;
+      background: rgba(88,166,255,.1); color: var(--blue); border: 1px solid rgba(88,166,255,.2);
+    }
+    .panel-hdr .tag.orange { background: rgba(240,136,62,.1); color: var(--orange); border-color: rgba(240,136,62,.2); }
+    .panel-hdr .tag.purple { background: rgba(188,140,255,.1); color: var(--purple); border-color: rgba(188,140,255,.2); }
+
+    #screen_container {
+      flex: 1;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      position: relative;
+    }
+    #screen_container canvas {
+      display: block;
+      image-rendering: pixelated;
+      max-width: 100%;
+      max-height: 100%;
+    }
+    #boot-overlay {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      background: rgba(13,17,23,.92);
+      font-size: 13px;
+      color: var(--muted);
+    }
+    #boot-overlay .spinner {
+      width: 28px; height: 28px;
+      border: 2px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin .8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #boot-overlay.hidden { display: none; }
+
+    /* ── Serial panel ── */
+    .serial-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    #serial_output {
+      flex: 1;
+      background: var(--bg);
+      color: var(--green);
+      padding: 10px 12px;
+      font-family: inherit;
+      font-size: 11px;
+      line-height: 1.5;
+      border: none;
+      resize: none;
+      outline: none;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .serial-input-bar {
+      display: flex;
+      gap: 0;
+      border-top: 1px solid var(--border);
+    }
+    #serial_prompt {
+      padding: 6px 8px;
+      background: var(--surface);
+      color: var(--green);
+      font-size: 11px;
+      font-family: inherit;
+      white-space: nowrap;
+      display: flex;
+      align-items: center;
+    }
+    #serial_input {
+      flex: 1;
+      background: var(--surface);
+      color: var(--text);
+      border: none;
+      padding: 6px 8px;
+      font-family: inherit;
+      font-size: 11px;
+      outline: none;
+    }
+    #serial_input::placeholder { color: var(--muted); }
+
+    /* ── Info strip ── */
+    .info-strip {
+      padding: 6px 14px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 10px;
+      color: var(--muted);
+      display: flex;
+      gap: 16px;
+    }
+    .info-strip span b { color: var(--text); }
+  </style>
+</head>
+<body>
+
+<header>
+  <span class="logo">Stratum</span>
+  <span class="badge">v86 · SMP+AHCI · DO</span>
+  <div class="hdr-right">
+    <div id="status-dot"></div>
+    <span id="status-text">Select an OS to boot</span>
+  </div>
+</header>
+
+<div class="os-bar">
+  <span class="os-label">Boot:</span>
+  <button class="os-btn kolibri" id="btn_kolibri" onclick="bootOS('kolibri')">
+    KolibriOS <span style="opacity:.6;font-size:10px">1.44MB floppy</span>
+  </button>
+  <button class="os-btn aqeous" id="btn_aqeous" onclick="bootOS('aqeous')">
+    Aqeous OS <span style="opacity:.6;font-size:10px">ELF multiboot</span>
+  </button>
+  <div class="sep"></div>
+  <button class="ctrl-btn" onclick="pauseResume()" id="btn_pause">Pause</button>
+  <button class="ctrl-btn" onclick="sendReset()">Reset</button>
+  <button class="ctrl-btn danger" onclick="stopEmulator()">Stop</button>
+  <div class="sep"></div>
+  <button class="ctrl-btn" onclick="clearSerial()">Clear log</button>
+</div>
+
+<main>
+  <!-- Screen -->
+  <div class="screen-panel">
+    <div class="panel-hdr">
+      VGA Screen
+      <span id="screen-tag" class="tag">idle</span>
+    </div>
+    <div id="screen_container">
+      <div id="boot-overlay">
+        <div>Select an OS above to begin</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Serial + info -->
+  <div class="serial-panel">
+    <div class="panel-hdr">
+      Serial (COM1)
+      <span id="serial-tag" class="tag">0 bytes</span>
+    </div>
+    <textarea id="serial_output" readonly placeholder="Serial output appears here once the BIOS/kernel boots…"></textarea>
+    <div class="serial-input-bar">
+      <div id="serial_prompt">COM1&nbsp;›&nbsp;</div>
+      <input id="serial_input" type="text" placeholder="Type and press Enter to send…"
+             onkeydown="serialSend(event)">
+    </div>
+    <div class="info-strip">
+      <span><b id="inf_os">—</b> OS</span>
+      <span><b id="inf_mem">64</b> MB RAM</span>
+      <span><b id="inf_serial">0</b> serial bytes</span>
+      <span><b id="inf_uptime">0</b>s uptime</span>
+    </div>
+  </div>
+</main>
+
+<script>
+"use strict";
+
+// ---------------------------------------------------------------------------
+// OS configurations
+// ---------------------------------------------------------------------------
+const CONFIGS = {
+  kolibri: {
+    label: "KolibriOS",
+    color: "orange",
+    memory_size: 64 * 1024 * 1024,
+    vga_memory_size: 8 * 1024 * 1024,
+    bios:     { url: "/bios/seabios.bin" },
+    vga_bios: { url: "/bios/vgabios.bin" },
+    fda: { url: "/images/kolibri.img", size: 1474560 },
+    autostart: true,
+  },
+  aqeous: {
+    label: "Aqeous OS",
+    color: "purple",
+    memory_size: 1920 * 1024 * 1024,  // Aqeous needs ~3GB; 1920MB is wasm32 max
+    vga_memory_size: 8 * 1024 * 1024,
+    bios:     { url: "/bios/seabios.bin" },
+    vga_bios: { url: "/bios/vgabios.bin" },
+    multiboot: { url: "/images/aqeous.bin" },
+    ahci_disk_size: 32 * 1024 * 1024,
+    acpi: true,
+    autostart: true,
+  },
+};
+
+// ---------------------------------------------------------------------------
+// State
+// ---------------------------------------------------------------------------
+let emulator  = null;
+let currentOS = null;
+let paused    = false;
+let serialBytes = 0;
+let startTime   = 0;
+let uptimeTimer = null;
+
+// ---------------------------------------------------------------------------
+// DOM helpers
+// ---------------------------------------------------------------------------
+const $  = id => document.getElementById(id);
+const setStatus = (cls, text) => {
+  $("status-dot").className = cls;
+  $("status-text").textContent = text;
+};
+
+function setOSButtons(active) {
+  ["kolibri","aqeous"].forEach(id => {
+    $("btn_" + id).classList.toggle("active", id === active);
+  });
+}
+
+function setScreenTag(label, color) {
+  const t = $("screen-tag");
+  t.textContent = label;
+  t.className = "tag" + (color ? " " + color : "");
+}
+
+function updateInfoStrip() {
+  $("inf_os").textContent = currentOS ? CONFIGS[currentOS].label : "—";
+  $("inf_serial").textContent = serialBytes;
+  if(startTime) $("inf_uptime").textContent = Math.floor((Date.now() - startTime)/1000);
+}
+
+function appendSerial(text) {
+  const ta = $("serial_output");
+  ta.value += text;
+  serialBytes += text.length;
+  $("serial-tag").textContent = serialBytes + " bytes";
+  ta.scrollTop = ta.scrollHeight;
+  updateInfoStrip();
+}
+
+// ---------------------------------------------------------------------------
+// Boot
+// ---------------------------------------------------------------------------
+function bootOS(osKey) {
+  if (!CONFIGS[osKey]) return;
+
+  // Tear down any running emulator
+  if (emulator) {
+    try { emulator.destroy(); } catch(e) {}
+    emulator = null;
+  }
+  clearInterval(uptimeTimer);
+  $("serial_output").value = "";
+  serialBytes = 0;
+  $("serial-tag").textContent = "0 bytes";
+  paused = false;
+  $("btn_pause").textContent = "Pause";
+
+  currentOS = osKey;
+  const cfg  = CONFIGS[osKey];
+  setOSButtons(osKey);
+  setStatus("loading", "Loading " + cfg.label + "…");
+  setScreenTag("loading…", "");
+
+  // Show spinner overlay while WASM/images load
+  const overlay = $("boot-overlay");
+  overlay.innerHTML = `<div class="spinner"></div><div>Loading ${cfg.label}…</div>`;
+  overlay.classList.remove("hidden");
+
+  const options = {
+    wasm_path:       "/v86-extensions.wasm",
+    memory_size:     cfg.memory_size,
+    vga_memory_size: cfg.vga_memory_size,
+    screen_container: $("screen_container"),
+    bios:     cfg.bios,
+    vga_bios: cfg.vga_bios,
+    autostart: cfg.autostart,
+  };
+
+  if (cfg.fda)            options.fda            = cfg.fda;
+  if (cfg.multiboot)     options.multiboot      = cfg.multiboot;
+  if (cfg.hda)           options.hda            = cfg.hda;
+  if (cfg.cdrom)         options.cdrom          = cfg.cdrom;
+  if (cfg.acpi)          options.acpi           = cfg.acpi;
+  if (cfg.ahci_disk_size) options.ahci_disk_size = cfg.ahci_disk_size;
+
+  emulator = new V86(options);
+    window.emu = emulator;
+
+  emulator.add_listener("emulator-ready", () => {
+    overlay.classList.add("hidden");
+    setStatus("loading", "Booting " + cfg.label + "…");
+    setScreenTag(cfg.label, cfg.color);
+    startTime = Date.now();
+    uptimeTimer = setInterval(updateInfoStrip, 1000);
+  });
+
+  emulator.add_listener("emulator-started", () => {
+    setStatus("running", cfg.label + " running");
+  });
+
+  emulator.add_listener("emulator-stopped", () => {
+    setStatus("", "Stopped");
+    setScreenTag("stopped", "");
+    clearInterval(uptimeTimer);
+  });
+
+  // Serial output
+  emulator.add_listener("serial0-output-byte", byte => {
+    appendSerial(String.fromCharCode(byte));
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Controls
+// ---------------------------------------------------------------------------
+function pauseResume() {
+  if (!emulator) return;
+  if (paused) {
+    emulator.run();
+    paused = false;
+    $("btn_pause").textContent = "Pause";
+    setStatus("running", CONFIGS[currentOS]?.label + " running");
+  } else {
+    emulator.stop();
+    paused = true;
+    $("btn_pause").textContent = "Resume";
+    setStatus("", "Paused");
+  }
+}
+
+function sendReset() {
+  if (!emulator) return;
+  emulator.restart();
+  $("serial_output").value = "";
+  serialBytes = 0;
+  $("serial-tag").textContent = "0 bytes";
+  setStatus("loading", "Resetting…");
+}
+
+function stopEmulator() {
+  if (!emulator) return;
+  emulator.stop();
+  setStatus("", "Stopped");
+  setScreenTag("stopped", "");
+}
+
+function clearSerial() {
+  $("serial_output").value = "";
+  serialBytes = 0;
+  $("serial-tag").textContent = "0 bytes";
+}
+
+function serialSend(e) {
+  if (e.key !== "Enter" || !emulator) return;
+  const input = $("serial_input");
+  const text  = input.value + "\n";
+  input.value = "";
+  for (let i = 0; i < text.length; i++) {
+    emulator.bus.send("serial0-input", text.charCodeAt(i));
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Guard: check libv86.js loaded
+// ---------------------------------------------------------------------------
+window.addEventListener("load", () => {
+  if (typeof V86 === "undefined") {
+    setStatus("error", "libv86.js failed to load");
+    $("boot-overlay").innerHTML =
+      '<div style="color:var(--red)">Error: /libv86.js not loaded.<br>Is the demo server running?</div>';
+  }
+});
+</script>
+</body>
+</html>

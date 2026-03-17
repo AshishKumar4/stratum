@@ -1,3 +1,21 @@
+## Stratum — v86 fork
+
+This is a fork of [v86](https://github.com/copy/v86) that adds hardware
+emulation for booting bare-metal OS kernels
+([Aqeous OS](https://github.com/AshishKumar4/Aqeous)) in the browser and on
+Cloudflare Workers.
+
+**What this fork adds to v86:**
+- **AHCI controller** — full HBA emulation (Intel ICH9) with DMA read/write, virtual RAM disk, and EXT2 formatter
+- **Local APIC / I/O APIC** — MMIO stubs at 0xFEE00000 / 0xFEC00000 so guest kernels can use APIC interrupts
+- **ACPI fixes** — S5 shutdown, SMI command port, runtime DSDT \_S5\_ injection
+- **SMP foundations** — Rust-side per-CPU APIC state and interrupt routing
+- **Stratum platform** — Cloudflare Worker with Durable Objects, browser demo, headless test harness
+
+See [STRATUM.md](STRATUM.md) for build instructions and full details.
+
+---
+
 [![Join the chat at https://gitter.im/copy/v86](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/copy/v86) or #v86 on [irc.libera.chat](https://libera.chat/)
 
 v86 emulates an x86-compatible CPU and hardware. Machine code is translated to

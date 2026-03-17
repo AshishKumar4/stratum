@@ -1,0 +1,27 @@
+name = "stratum"
+main = "src/index.ts"
+compatibility_date = "2025-03-14"
+compatibility_flags = ["nodejs_compat"]
+
+# For local dev: WASM + BIOS are served via redirect to CDN copy.
+# Override WASM_URL to point at a local file server if needed.
+[vars]
+WASM_URL = "https://copy.sh/v86/build/v86.wasm"
+
+[[durable_objects.bindings]]
+name = "V86_SESSION"
+class_name = "V86SessionDO"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["V86SessionDO"]
+
+# Uncomment to bind an R2 bucket for WASM + BIOS assets:
+# [[r2_buckets]]
+# binding = "ASSETS"
+# bucket_name = "stratum-assets"
+
+# Uncomment to bind a KV namespace for session metadata:
+# [[kv_namespaces]]
+# binding = "SESSION_KV"
+# id = "YOUR_KV_NAMESPACE_ID"
