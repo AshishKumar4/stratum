@@ -488,7 +488,11 @@ V86.prototype.continue_init = async function(emulator, options)
     {
         if(index === total)
         {
-            setTimeout(done.bind(this), 0);
+            // Use a microtask (Promise) instead of a macrotask (setTimeout)
+            // so that the done callback fires reliably in environments where
+            // macrotask scheduling is unreliable after the handler returns,
+            // such as Cloudflare Workers.
+            Promise.resolve().then(done.bind(this));
             return;
         }
 
@@ -1534,6 +1538,23 @@ function FileNotFoundError(message)
 FileNotFoundError.prototype = Error.prototype;
 
 /* global module, self */
+
+// Expose V86.microtick as a forwarding property to v86.microtick so that
+// consumers using the public V86 export can override the clock source before
+// calling `new V86(...)`.  This is necessary for environments like Cloudflare
+// Workers where performance.now() is frozen during synchronous execution
+// (Spectre mitigation) and callers need to supply a custom time source.
+//
+// Usage:
+//   import { V86 } from "./libv86.mjs";
+//   V86.microtick = () => Date.now();   // or any custom clock
+//   const emulator = new V86({ ... });
+Object.defineProperty(V86, "microtick", {
+    get: function() { return v86.microtick; },
+    set: function(fn) { v86.microtick = fn; },
+    enumerable: true,
+    configurable: true,
+});
 
 if(typeof module !== "undefined" && typeof module.exports !== "undefined")
 {

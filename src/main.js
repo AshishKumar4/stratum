@@ -219,6 +219,15 @@ v86.prototype.restore_state = function(state)
 };
 
 /* global require */
+// v86.microtick is the clock source used by all hardware timers (PIT, APIC,
+// TSC, RTC, main_loop).  It is set here at module initialisation time but is
+// intentionally overridable: assign a replacement function to V86.microtick
+// (or v86.microtick) after import but before calling `new V86(...)` and every
+// hardware timer in both JS and WASM will use that function instead.
+//
+// In Cloudflare Workers performance.now() is frozen at zero during synchronous
+// execution (Spectre mitigation).  Override before constructing the emulator:
+//   V86.microtick = () => Date.now();
 if(typeof performance === "object" && performance.now)
 {
     v86.microtick = performance.now.bind(performance);
