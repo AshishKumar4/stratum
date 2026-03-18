@@ -263,6 +263,8 @@ V86.prototype.continue_init = async function(emulator, options)
 
     // Enable unconditionally, so that state images don't miss hardware
     // TODO: Should be properly fixed in restore_state
+    // type: "none" skips network PCI device registration entirely —
+    // no NE2K, no virtio, no PCI slot.  Guest OS sees no NIC.
     settings.net_device = options.net_device || { type: "ne2k" };
 
     const screen_options = options.screen || {};

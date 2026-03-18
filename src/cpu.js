@@ -1319,6 +1319,7 @@ CPU.prototype.init = function(settings, device_bus)
         {
             this.devices.virtio_net = new VirtioNet(this, device_bus, settings.preserve_mac_from_state_image, settings.net_device.mtu);
         }
+        // type: "none" — no network PCI device registered.  Guest sees no NIC.
 
         if(settings.fs9p)
         {
