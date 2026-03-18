@@ -18,6 +18,12 @@
   "types": "v86.d.ts",
   "repository": "github:AshishKumar4/stratum",
   "type": "module",
+  "scripts": {
+    "build:js": "esbuild src/browser/starter.js --bundle --format=iife --global-name=V86Starter --platform=browser --outfile=build/libv86.js --define:DEBUG=false --external:perf_hooks --external:crypto --external:node:crypto --external:\"node:fs/promises\" --external:./capstone-x86.min.js --external:./libwabt.cjs --target=es2020",
+    "build:esm": "esbuild src/browser/starter.js --bundle --format=esm --platform=browser --outfile=build/libv86.mjs --define:DEBUG=false --external:perf_hooks --external:crypto --external:node:crypto --external:\"node:fs/promises\" --external:./capstone-x86.min.js --external:./libwabt.cjs --sourcemap --target=es2020",
+    "build": "bun run build:js && bun run build:esm",
+    "demo": "bun run stratum/demo/server.ts"
+  },
   "devDependencies": {
     "esbuild": "^0.25.0"
   }

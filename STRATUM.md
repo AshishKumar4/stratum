@@ -49,34 +49,64 @@ stratum/
   images/             OS kernel images (gitignored — see images/README.md)
 ```
 
-## Quick start
+## Building
 
-### Build JS bundle (development — fast)
+### Prerequisites
 
 ```bash
-bun install   # or npm install
-npx esbuild src/main.js --bundle --format=esm --platform=node \
-  --outfile=build/libv86.mjs \
-  --define:DEBUG=false \
-  --external:fs --external:path --external:url --external:"node:*" \
-  --sourcemap --target=es2020
+bun install          # install JS dependencies (esbuild)
 ```
 
-### Build WASM (requires Rust + clang)
+### 1. JS bundles (esbuild — no Closure Compiler needed)
+
+The upstream Makefile uses Google Closure Compiler, which is heavy and hard to
+install. We use esbuild instead:
+
+```bash
+bun run build:js     # IIFE bundle  → build/libv86.js   (global V86Starter)
+bun run build:esm    # ESM bundle   → build/libv86.mjs  (export { V86 })
+bun run build        # both of the above
+```
+
+Entry point is `src/browser/starter.js`. The following are marked as external
+(not bundled): `perf_hooks`, `crypto`, `node:crypto`, `node:fs/promises`,
+`./capstone-x86.min.js`, `./libwabt.cjs`.
+
+### 2. WASM build (requires Rust + clang)
 
 ```bash
 rustup target add wasm32-unknown-unknown
-make build/v86.wasm
+make build/v86.wasm           # release build
+make build/v86-debug.wasm     # debug build (for tests)
 ```
 
-### Run headless test
+The WASM build also needs `clang` (for softfloat.o and zstddeclib.o C objects)
+and the Rust `wasm32-unknown-unknown` target.
+
+> **Note:** Rust SMP extensions exist in `src/rust/cpu/` (`apic_mmio.rs`,
+> `apic_smp.rs`, `cpu_smp.rs`, `ioapic_smp.rs`) but these are scaffolding —
+> the SMP WASM exports compile but aren't exercised at runtime yet. The
+> pure-JS LAPIC stub (`src/lapic_stub.js`) handles APIC MMIO in the meantime.
+> See `SMP_PLAN.md` for the full roadmap.
+
+### 3. Run the demo
 
 ```bash
-# Place aqeous.bin in stratum/images/ first (see stratum/images/README.md)
+bun run demo         # starts Bun server on port 8080
+```
+
+The demo needs `stratum/images/aqeous.bin` (gitignored — see
+`stratum/images/README.md` for how to obtain it). The server serves the JS
+bundle, WASM, BIOS binaries, and kernel images.
+
+### 4. Run headless tests
+
+```bash
+# Requires stratum/images/aqeous.bin
 node stratum/tests/test_headless.mjs
 ```
 
-### Cloudflare Worker
+### 5. Cloudflare Worker
 
 ```bash
 cd stratum/worker
