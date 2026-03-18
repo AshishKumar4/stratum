@@ -2129,7 +2129,19 @@ pub unsafe fn do_page_walk(
     // The TLB entry is built the same way regardless of path: `high` is replaced
     // by the frame offset so (high + mem8_ptr) points directly into WASM linear
     // memory — identical encoding to non-paged resident pages.
-    if high >= memory::PAGED_THRESHOLD {
+    //
+    // CRITICAL: Only demand-page GPAs in [PAGED_THRESHOLD, memory_size).
+    // GPAs >= memory_size are MMIO space (VGA LFB at 0xE0000000, APIC, HPET…).
+    // Without this bound, a VGA LFB write faults into do_page_walk, swap_page_in
+    // allocates a hot-pool frame for it, and the JIT builds a TLB entry pointing
+    // into mem8[frame_offset] — a normal RAM path that bypasses mmap_write32
+    // entirely. The VGA dirty bitmap (vga::mark_dirty) is never called, so
+    // svga_fill_pixel_buffer finds nothing dirty and the screen never updates.
+    // Bounding by memory_size lets MMIO GPAs fall through to in_mapped_range →
+    // TLB_IN_MAPPED_RANGE → mmap_write32 → vga::mark_dirty, restoring correct
+    // dirty tracking and screen updates.
+    let mem_size = unsafe { *memory_size };
+    if high >= memory::PAGED_THRESHOLD && high < mem_size {
         let pool_offset = unsafe { crate::cpu::page_pool::pool_lookup(high) };
         let frame_offset = if pool_offset >= 0 {
             pool_offset
