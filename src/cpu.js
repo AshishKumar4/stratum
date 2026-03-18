@@ -1460,6 +1460,18 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
                 multiboot_data += cmdline_utf8.length;
             }
 
+            // mem_lower / mem_upper (multiboot info offsets 4 and 8).
+            // Required for OSes that check available memory before parsing
+            // the full memory map.  Use logical_memory_size when demand-paging
+            // is active so the guest sees the full paged range.
+            {
+                const reported_mem = cpu._logical_memory_size || cpu.memory_size[0];
+                info |= 0x1; // MULTIBOOT_INFO_MEMORY
+                cpu.write32(multiboot_info_addr + 4, 640);  // mem_lower: 640 KB conventional
+                cpu.write32(multiboot_info_addr + 8,
+                    Math.max(0, (reported_mem - 1024 * 1024)) >> 10); // mem_upper: KB above 1MB
+            }
+
             // memory map
             if(flags & MULTIBOOT_HEADER_MEMORY_INFO)
             {
@@ -1468,13 +1480,25 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
                 cpu.write32(multiboot_info_addr + 44, 0);
                 cpu.write32(multiboot_info_addr + 48, multiboot_data);
 
-                // Create a memory map for the multiboot kernel
-                // does not exclude traditional bios exclusions
+                // Use logical_memory_size when building the multiboot memory map.
+                // When demand-paging is active, memory_size (WASM allocation) is smaller
+                // than logical_memory_size (what the guest should see).  The mmap_read8
+                // array has catch-all handlers for addresses >= memory_size, so a raw
+                // scan would only report [0, memory_size) as RAM.  Instead, scan up to
+                // logical_memory_size so the guest sees the full demand-paged range.
+                const reported_size = cpu._logical_memory_size || cpu.memory_size[0];
+
                 let start = 0;
                 let was_memory = false;
                 for(let addr = 0; addr < MMAP_MAX; addr += MMAP_BLOCK_SIZE)
                 {
-                    if(was_memory && cpu.memory_map_read8[addr >>> MMAP_BLOCK_BITS] !== undefined)
+                    // A block is RAM if: (a) below reported_size AND no real device
+                    // handler, or (b) no mmap handler at all (within WASM allocation).
+                    // Blocks above reported_size with handlers are real MMIO devices.
+                    const has_handler = cpu.memory_map_read8[addr >>> MMAP_BLOCK_BITS] !== undefined;
+                    const is_ram = addr < reported_size && (!has_handler || addr >= cpu.memory_size[0]);
+
+                    if(was_memory && !is_ram)
                     {
                         cpu.write32(multiboot_data, 20); // size
                         cpu.write32(multiboot_data + 4, start); //addr (64-bit)
@@ -1486,13 +1510,24 @@ CPU.prototype.load_multiboot_option_rom = function(buffer, initrd, cmdline)
                         multiboot_mmap_count += 24;
                         was_memory = false;
                     }
-                    else if(!was_memory && cpu.memory_map_read8[addr >>> MMAP_BLOCK_BITS] === undefined)
+                    else if(!was_memory && is_ram)
                     {
                         start = addr;
                         was_memory = true;
                     }
                 }
-                dbg_assert (!was_memory, "top of 4GB shouldn't have memory");
+                // Flush trailing RAM region
+                if(was_memory)
+                {
+                    cpu.write32(multiboot_data, 20);
+                    cpu.write32(multiboot_data + 4, start);
+                    cpu.write32(multiboot_data + 8, 0);
+                    cpu.write32(multiboot_data + 12, reported_size - start);
+                    cpu.write32(multiboot_data + 16, 0);
+                    cpu.write32(multiboot_data + 20, 1);
+                    multiboot_data += 24;
+                    multiboot_mmap_count += 24;
+                }
                 cpu.write32(multiboot_info_addr + 44, multiboot_mmap_count);
             }
 

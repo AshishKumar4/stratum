@@ -45,7 +45,7 @@ use crate::cpu::cpu::{
 };
 
 // AHCI memory addresses (from Phase 4 design)
-pub const AHCI_MEM_ADDRESS: u32 = 0xFEBF0000;
+pub const AHCI_MEM_ADDRESS: u32 = 0xFEA00000;
 pub const AHCI_MEM_SIZE: u32 = 0x1000;
 use crate::cpu::global_pointers::memory_size;
 use crate::cpu::ioapic;
