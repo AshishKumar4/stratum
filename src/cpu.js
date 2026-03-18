@@ -1019,12 +1019,22 @@ CPU.prototype.create_memory = function(size, minimum_size)
 
     console.assert(this.memory_size[0] === 0, "Expected uninitialised memory");
 
+    // memory_size[0] controls in_mapped_range() and demand paging bounds.
+    // It stays at the original 'size' (e.g. 64 MB) so that addresses in
+    // [memory_size, logical_memory_size) are routed through MMIO handlers
+    // and the demand paging system continues to work correctly.
     this.memory_size[0] = size;
 
-    const memory_offset = this.allocate_memory(size);
+    // When logical_memory_size exceeds memory_size, grow the actual WASM
+    // allocation to cover the full logical range.  This prevents OOB traps
+    // when guest code accesses physical memory at high addresses before
+    // paging is enabled (e.g. multiboot kernels probing RAM).  WASM pages
+    // are lazily backed — only touched pages consume real memory.
+    const alloc_size = Math.max(size, this._logical_memory_size || size);
+    const memory_offset = this.allocate_memory(alloc_size);
 
-    this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, size);
-    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, size >> 2);
+    this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, alloc_size);
+    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, alloc_size >> 2);
 };
 
 /**
