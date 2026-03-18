@@ -2139,13 +2139,16 @@ pub unsafe fn do_page_walk(
     let logical_boundary = if logical > 0 { logical } else { unsafe { *memory_size } };
     if high >= memory::PAGED_THRESHOLD && high < logical_boundary {
         let pool_offset = unsafe { crate::cpu::page_pool::pool_lookup(high) };
-        let frame_offset = if pool_offset >= 0 {
+        // pool_lookup returns 0 (UNMAPPED) on miss, >0 on hit (valid frame offsets
+        // are always >= PAGED_THRESHOLD = 32 MB).  swap_page_in returns >0 on
+        // success, -1 on error.
+        let frame_offset = if pool_offset > 0 {
             pool_offset
         } else {
             // Cold miss: cross to JS, which loads from SQLite and calls pool_register.
             unsafe { memory::ext::swap_page_in(high, for_writing as i32) }
         };
-        if frame_offset >= 0 {
+        if frame_offset > 0 {
             high = frame_offset as u32;
         }
         // On -1 (SqlPageStore error): fall through unchanged.  `high` remains a GPA
