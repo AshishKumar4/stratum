@@ -4,6 +4,7 @@ pub mod apic_smp;
 pub mod arith;
 pub mod call_indirect;
 pub mod cpu;
+pub mod cpu_context;
 pub mod cpu_smp;
 pub mod fpu;
 pub mod global_pointers;

@@ -1,13 +1,17 @@
 // SMP CPU Integration with Enhanced APIC Support
 // Integrates the enhanced APIC system with CPU emulation
 
-use crate::cpu::{apic_mmio, apic_smp, ioapic_smp, global_pointers::*};
-use crate::cpu::cpu::{js, call_interrupt_vector};
+use crate::cpu::{apic_mmio, apic_smp};
+use crate::cpu::cpu::{js, call_interrupt_vector, do_many_cycles_native, handle_irqs};
+use crate::cpu::cpu_context::{
+    initialize_ap_context, is_context_valid, restore_cpu_context, save_cpu_context,
+    MAX_CPUS as CTX_MAX_CPUS,
+};
+use crate::cpu::global_pointers::in_hlt;
 use std::sync::{Arc, Mutex};
-use std::collections::HashMap;
 
-/// Maximum number of supported CPUs
-const MAX_CPUS: usize = 8;
+/// Maximum number of supported CPUs — must match cpu_context::MAX_CPUS.
+const MAX_CPUS: usize = CTX_MAX_CPUS;
 
 /// CPU state for SMP system
 #[derive(Clone)]
@@ -90,15 +94,21 @@ impl SmpManager {
         if cpu_id == 0 || cpu_id >= self.cpu_count as u8 {
             return false;
         }
-        
+
         if let Some(cpu_context) = self.get_cpu_context(cpu_id) {
             let mut cpu_lock = cpu_context.lock().unwrap();
             cpu_lock.is_running = true;
             cpu_lock.current_eip = start_eip;
-            
+
             // Initialize AP's APIC
             apic_mmio::handle_cpu_startup(cpu_id);
-            
+
+            // Build the initial register context for this AP.
+            // Real-mode start: CS = sipi_vector, EIP = sipi_vector << 12.
+            // start_eip is already (sipi_vector << 12); recover cs_selector.
+            let cs_selector = ((start_eip >> 4) & 0xFFFF) as u16;
+            unsafe { initialize_ap_context(cpu_id as usize, start_eip, cs_selector) };
+
             dbg_log!("Started Application Processor {} at EIP {:08x}", cpu_id, start_eip);
             true
         } else {
@@ -312,18 +322,59 @@ pub fn deliver_ipi_to_cpu(target_cpu: u8, vector: u8) -> bool {
     true
 }
 
-/// CPU main loop integration for SMP
+/// CPU main loop — cooperative SMP slice for `cpu_id`.
+///
+/// Called from JavaScript after the BSP's `main_loop()` returns, once per AP
+/// in round-robin.  The sequence is:
+///
+///   1. Save the live (BSP) state from the fixed register slots.
+///   2. Load this AP's context into the fixed slots.
+///   3. Run APIC interrupt delivery for this AP.
+///   4. Execute a quantum of guest instructions via `do_many_cycles_native()`.
+///   5. Run hardware timers + IRQ check with AP's flags live.
+///   6. Save AP state back.
+///   7. Reload BSP state so the fixed slots are correct for the next
+///      `main_loop()` call.
+///
+/// If the AP has no saved context yet (never started via SIPI), does nothing.
 pub fn cpu_loop_smp(cpu_id: u8) -> bool {
-    // Check for pending APIC interrupts
-    if handle_cpu_interrupt(cpu_id) {
-        return true;
+    let cpu_id_usize = cpu_id as usize;
+
+    // Ignore requests for CPU 0 (BSP) or uninitialised APs.
+    if cpu_id == 0 || !is_context_valid(cpu_id_usize) {
+        return false;
     }
-    
-    // Handle APIC timer
-    let now = unsafe { js::microtick() };
-    let _next_timer = handle_apic_timer_smp(cpu_id, now);
-    
-    false
+
+    unsafe {
+        // ── 1. Save live BSP state ────────────────────────────────────────
+        save_cpu_context(0);
+
+        // ── 2. Restore this AP's state ────────────────────────────────────
+        restore_cpu_context(cpu_id_usize);
+        apic_mmio::set_current_cpu_id(cpu_id);
+
+        // ── 3. Deliver any pending APIC interrupt to this AP ──────────────
+        handle_cpu_interrupt(cpu_id);
+
+        // ── 4. Execute guest instructions (skip if AP is halted) ──────────
+        if !*in_hlt {
+            do_many_cycles_native();
+        }
+
+        // ── 5. Hardware timers + IRQ check with AP's EFLAGS live ──────────
+        let now = js::microtick();
+        handle_apic_timer_smp(cpu_id, now);
+        handle_irqs();
+
+        // ── 6. Save AP state ──────────────────────────────────────────────
+        save_cpu_context(cpu_id_usize);
+
+        // ── 7. Restore BSP so fixed slots are correct for next main_loop() ─
+        restore_cpu_context(0);
+        apic_mmio::set_current_cpu_id(0);
+    }
+
+    true
 }
 
 /// Initialize SMP with default configuration
