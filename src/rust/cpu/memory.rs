@@ -102,19 +102,20 @@ pub fn svga_allocate_memory(size: u32) -> u32 {
     ptr as u32
 }
 
-/// Returns true if `addr` is in a memory-mapped I/O range (not regular RAM).
+/// Returns true if `addr` is outside the WASM-backed physical RAM range.
 ///
-/// When logical_memory_size is set (demand-paging active), the RAM/MMIO boundary
-/// is at logical_memory_size rather than memory_size.  Addresses in
-/// [memory_size, logical_memory_size) are demand-paged RAM, NOT MMIO.
+/// This uses memory_size (the WASM allocation), NOT logical_memory_size.
+/// Addresses in [memory_size, logical_memory_size) are demand-paged RAM,
+/// but they're not directly accessible via mem8[] — they must go through
+/// do_page_walk which maps them to hot pool frames.  Raw read32s/write32
+/// calls (e.g. page table walks) for these addresses need the MMIO handler
+/// to return safely (0xFF) rather than crashing with OOB on mem8[].
+///
+/// The demand paging decision uses its own logical_boundary check in
+/// do_page_walk, independent of this function.
 #[no_mangle]
 pub fn in_mapped_range(addr: u32) -> bool {
-    if addr >= 0xA0000 && addr < 0xC0000 {
-        return true;
-    }
-    let logical = unsafe { *logical_memory_size };
-    let boundary = if logical > 0 { logical } else { unsafe { *memory_size } };
-    addr >= boundary
+    return addr >= 0xA0000 && addr < 0xC0000 || addr >= unsafe { *memory_size };
 }
 
 pub const VGA_LFB_ADDRESS: u32 = 0xE0000000;

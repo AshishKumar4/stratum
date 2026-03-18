@@ -1935,6 +1935,44 @@ pub unsafe fn translate_address_write_and_can_skip_dirty(address: i32) -> OrPage
 // - 2 bits PDPT | 9 bits PD | 9 bits PT | 12 bits offset
 // - 2 bits PDPT | 9 bits PD | 21 bits offset (2MB huge page)
 //
+/// Resolve a guest physical address to a WASM-accessible address for reading.
+///
+/// When demand-paging is active, GPAs in [PAGED_THRESHOLD, logical_memory_size)
+/// may not be directly accessible via mem8[] if they're above memory_size (the
+/// WASM allocation).  This function ensures the page is in the hot pool first,
+/// then returns the pool frame address (which IS within WASM bounds).
+///
+/// Used by the page table walker to read page directory/table entries that the
+/// guest OS may have placed in demand-paged physical memory.
+///
+/// For GPAs within WASM bounds (< memory_size) or below PAGED_THRESHOLD,
+/// returns the address unchanged — no pool lookup needed.
+#[inline]
+unsafe fn ensure_phys_readable(gpa: u32) -> u32 {
+    let mem_size = *memory_size;
+    if gpa < mem_size {
+        return gpa;  // Within WASM allocation — directly accessible
+    }
+    let logical = *logical_memory_size;
+    let logical_boundary = if logical > 0 { logical } else { mem_size };
+    if gpa >= memory::PAGED_THRESHOLD && gpa < logical_boundary {
+        // GPA is in the demand-paged range but above WASM allocation.
+        // Ensure it's in the hot pool so we can read it via mem8[].
+        let page_gpa = gpa & !0xFFF;
+        let pool_offset = crate::cpu::page_pool::pool_lookup(page_gpa);
+        let frame_offset = if pool_offset > 0 {
+            pool_offset
+        } else {
+            memory::ext::swap_page_in(page_gpa, 0)  // read-only
+        };
+        if frame_offset > 0 {
+            return frame_offset as u32 | (gpa & 0xFFF);
+        }
+    }
+    // Fallback: return unchanged (will hit in_mapped_range → MMIO handler)
+    gpa
+}
+
 // Note that PAE entries are 64-bit, and can describe physical addresses over 32
 // bits. However, since we support only 32-bit physical addresses, we require
 // the high half of the entry to be 0.
@@ -1975,7 +2013,7 @@ pub unsafe fn do_page_walk(
 
             let page_dir_addr =
                 (pdpt_entry as u32 & 0xFFFFF000) + ((((addr as u32) >> 21) & 0x1FF) << 3);
-            let page_dir_entry = memory::read64s(page_dir_addr);
+            let page_dir_entry = memory::read64s(ensure_phys_readable(page_dir_addr));
             dbg_assert!(
                 page_dir_entry as u64 & 0x7FFF_FFFF_0000_0000 == 0,
                 "Unsupported: Page directory entry larger than 32 bits"
@@ -1989,7 +2027,7 @@ pub unsafe fn do_page_walk(
         }
         else {
             let page_dir_addr = *cr.offset(3) as u32 + (((addr as u32) >> 22) << 2);
-            let page_dir_entry = memory::read32s(page_dir_addr);
+            let page_dir_entry = memory::read32s(ensure_phys_readable(page_dir_addr));
             (page_dir_addr, page_dir_entry)
         };
 
@@ -2036,7 +2074,7 @@ pub unsafe fn do_page_walk(
             let (page_table_addr, page_table_entry) = if pae {
                 let page_table_addr =
                     (page_dir_entry as u32 & 0xFFFFF000) + (((addr as u32 >> 12) & 0x1FF) << 3);
-                let page_table_entry = memory::read64s(page_table_addr);
+                let page_table_entry = memory::read64s(ensure_phys_readable(page_table_addr));
                 dbg_assert!(
                     page_table_entry as u64 & 0x7FFF_FFFF_0000_0000 == 0,
                     "Unsupported: Page table entry larger than 32 bits"
@@ -2051,7 +2089,7 @@ pub unsafe fn do_page_walk(
             else {
                 let page_table_addr =
                     (page_dir_entry as u32 & 0xFFFFF000) + (((addr as u32 >> 12) & 0x3FF) << 2);
-                let page_table_entry = memory::read32s(page_table_addr);
+                let page_table_entry = memory::read32s(ensure_phys_readable(page_table_addr));
                 (page_table_addr, page_table_entry)
             };
 
@@ -2151,10 +2189,11 @@ pub unsafe fn do_page_walk(
         if frame_offset > 0 {
             high = frame_offset as u32;
         }
-        // On -1 (SqlPageStore error): fall through unchanged.  `high` remains a GPA
-        // ≥ PAGED_THRESHOLD which will trigger in_mapped_range (addr ≥ memory_size)
-        // → mmap_read8 handler → returns 0xFF.  Guest sees a bus error on that page
-        // rather than a silent wrong read — safe and debuggable.
+        // On error (frame_offset <= 0): fall through unchanged.  `high` remains
+        // the original GPA which is ≥ memory_size (for demand-paged ranges above
+        // WASM allocation).  in_mapped_range(high) returns true → TLB_IN_MAPPED_RANGE
+        // → mmap_read/write handler → returns 0xFF.  Guest sees a bus error rather
+        // than a WASM OOB crash.
     }
 
     let is_in_mapped_range = memory::in_mapped_range(high);
