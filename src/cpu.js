@@ -318,6 +318,133 @@ CPU.prototype.swap_page_in = function(gpa, for_writing)
 };
 
 /**
+ * Resolve a guest physical address to a WASM byte offset suitable for
+ * cpu.mem8[] access.  Used by AHCI DMA and other device code that needs
+ * to read/write guest physical memory outside the x86 instruction path.
+ *
+ * For GPAs within the WASM allocation (< memory_size), returns the GPA
+ * unchanged — it's directly addressable in mem8[].
+ *
+ * For GPAs in the demand-paged range [PAGED_THRESHOLD, logical_memory_size),
+ * checks the WASM pool_lookup (hot pool hit) and falls back to swap_page_in
+ * (cold miss → load from SQLite) to get the WASM frame offset.
+ *
+ * Returns -1 if the GPA cannot be resolved (MMIO range or error).
+ *
+ * @param {number} gpa  Guest physical address
+ * @returns {number}    WASM byte offset into mem8[], or -1
+ */
+CPU.prototype.resolveGPA = function(gpa)
+{
+    const page_gpa = gpa & ~0xFFF;
+    const page_off = gpa & 0xFFF;
+
+    // Within WASM allocation — directly addressable
+    if(page_gpa < this.memory_size[0])
+    {
+        return gpa;
+    }
+
+    // Try WASM pool_lookup (fast path, no FFI for warm hits)
+    if(this.pool_lookup)
+    {
+        const frame = this.pool_lookup(page_gpa);
+        if(frame > 0)
+        {
+            return frame + page_off;
+        }
+    }
+
+    // Cold miss — swap page in from SQLite via JS hook
+    const frame = this.swap_page_in(page_gpa, 0);
+    if(frame > 0)
+    {
+        return frame + page_off;
+    }
+
+    // Cannot resolve (MMIO range or demand paging not active)
+    return -1;
+};
+
+/**
+ * Read a contiguous region of guest physical memory into a new Uint8Array,
+ * correctly handling demand-paged pages.  Used by AHCI DMA.
+ *
+ * @param {number} gpa   Guest physical start address
+ * @param {number} size  Number of bytes to read
+ * @returns {Uint8Array} Copy of the data (may span multiple pages)
+ */
+CPU.prototype.dma_read = function(gpa, size)
+{
+    const result = new Uint8Array(size);
+    let pos = 0;
+    while(pos < size)
+    {
+        const page_offset = (gpa + pos) & 0xFFF;
+        const chunk = Math.min(size - pos, 0x1000 - page_offset);
+        const resolved = this.resolveGPA(gpa + pos);
+        if(resolved >= 0 && resolved + chunk <= this.mem8.length)
+        {
+            result.set(this.mem8.subarray(resolved, resolved + chunk), pos);
+        }
+        // else: unresolvable — leave as zeros
+        pos += chunk;
+    }
+    return result;
+};
+
+/**
+ * Write a contiguous region to guest physical memory,
+ * correctly handling demand-paged pages.  Used by AHCI DMA.
+ *
+ * @param {number} gpa    Guest physical start address
+ * @param {Uint8Array} data  Data to write
+ * @param {number} [size]    Optional size (defaults to data.length)
+ */
+CPU.prototype.dma_write = function(gpa, data, size)
+{
+    if(size === undefined) size = data.length;
+    let pos = 0;
+    while(pos < size)
+    {
+        const page_offset = (gpa + pos) & 0xFFF;
+        const chunk = Math.min(size - pos, 0x1000 - page_offset);
+        // swap_page_in with for_writing=1 so the frame is marked dirty
+        const page_gpa = (gpa + pos) & ~0xFFF;
+        let resolved;
+        if(page_gpa < this.memory_size[0])
+        {
+            resolved = gpa + pos;
+        }
+        else
+        {
+            // Need to ensure the page is in the pool and marked dirty
+            if(this.pool_lookup)
+            {
+                const frame = this.pool_lookup(page_gpa);
+                if(frame > 0)
+                {
+                    resolved = frame + page_offset;
+                }
+            }
+            if(resolved === undefined)
+            {
+                const frame = this.swap_page_in(page_gpa, 1); // for_writing=1
+                if(frame > 0)
+                {
+                    resolved = frame + page_offset;
+                }
+            }
+        }
+        if(resolved !== undefined && resolved >= 0 && resolved + chunk <= this.mem8.length)
+        {
+            this.mem8.set(data.subarray(pos, pos + chunk), resolved);
+        }
+        pos += chunk;
+    }
+};
+
+/**
  * @param {Array.<number>|Uint8Array} blob
  * @param {number} offset
  */
@@ -456,6 +583,9 @@ CPU.prototype.wasm_patch = function()
     this.zstd_read_free = get_import("zstd_read_free");
 
     // SMP/APIC extensions (optional — present only when built with SMP modules)
+    // Demand-paging pool exports (used by AHCI DMA resolver)
+    this.pool_lookup       = get_optional_import("pool_lookup");
+
     this.smp_init          = get_optional_import("smp_init");
     this.smp_cpu_loop      = get_optional_import("smp_cpu_loop");
     this.smp_is_enabled    = get_optional_import("smp_is_enabled");

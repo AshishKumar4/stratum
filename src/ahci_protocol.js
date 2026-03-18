@@ -518,10 +518,7 @@ export class AHCICommandProcessor {
             const entry = prdt_entries[0];
             const dest_addr = entry.dba.low;
             const xfer_size = Math.min(512, entry.dbc);
-            const mem8 = this.controller.cpu.mem8;
-            for (let i = 0; i < xfer_size; i++) {
-                mem8[dest_addr + i] = identify_bytes[i];
-            }
+            this.controller.cpu.dma_write(dest_addr, identify_bytes, xfer_size);
             cmd_header.prdbc = xfer_size;
         }
 
@@ -555,14 +552,13 @@ export class AHCICommandProcessor {
 
         const disk_offset   = lba * this.sector_size;
         const transfer_size = count * this.sector_size;
-        const mem8          = this.controller.cpu.mem8;
+        const cpu           = this.controller.cpu;
         const prdt_entries  = this.get_prdt_entries(cmd_header);
 
         let transferred = 0;
         let disk_pos    = disk_offset;
 
         for (const entry of prdt_entries) {
-            // AHCI spec: DBC is the hard cap per PRDT entry.
             const entry_limit = entry.dbc;
             const remaining   = transfer_size - transferred;
             const size        = Math.min(entry_limit, remaining);
@@ -570,15 +566,16 @@ export class AHCICommandProcessor {
 
             const memory_addr = entry.dba.low;
 
-            // Copy from disk buffer to guest memory
+            // Copy from disk buffer to guest memory via demand-paging-aware DMA
             const src_end = Math.min(disk_pos + size, disk.data.length);
             const copy_len = src_end - disk_pos;
             if (copy_len > 0) {
-                mem8.set(disk.data.subarray(disk_pos, src_end), memory_addr);
+                cpu.dma_write(memory_addr, disk.data.subarray(disk_pos, src_end), copy_len);
             }
             // Zero-fill any overrun (read past end of disk)
             if (copy_len < size) {
-                mem8.fill(0, memory_addr + copy_len, memory_addr + size);
+                const zeros = new Uint8Array(size - copy_len);
+                cpu.dma_write(memory_addr + copy_len, zeros);
             }
 
             transferred += size;
@@ -613,7 +610,7 @@ export class AHCICommandProcessor {
 
         const disk_offset   = lba * this.sector_size;
         const transfer_size = count * this.sector_size;
-        const mem8          = this.controller.cpu.mem8;
+        const cpu           = this.controller.cpu;
         const prdt_entries  = this.get_prdt_entries(cmd_header);
 
         let transferred = 0;
@@ -627,11 +624,12 @@ export class AHCICommandProcessor {
 
             const memory_addr = entry.dba.low;
 
-            // Copy from guest memory to disk buffer
+            // Copy from guest memory to disk buffer via demand-paging-aware DMA
             const dest_end  = Math.min(disk_pos + size, disk.data.length);
             const copy_len  = dest_end - disk_pos;
             if (copy_len > 0) {
-                disk.data.set(mem8.subarray(memory_addr, memory_addr + copy_len), disk_pos);
+                const guest_data = cpu.dma_read(memory_addr, copy_len);
+                disk.data.set(guest_data, disk_pos);
             }
 
             transferred += size;
@@ -696,15 +694,13 @@ export class AHCICommandProcessor {
             return new AHCICommandHeader(slot, cmd_list_entry, 0);
         }
 
-        // Read directly from guest physical memory via cpu.mem8
+        // Read command header from guest physical memory via demand-paging-aware DMA
         const clb = this.port.clb;  // 32-bit base (upper ignored for now)
         if (clb === 0) {
             return null;
         }
-        const mem8 = this.controller.cpu.mem8;
         const entry_addr = clb + slot * 32;
-        // Slice a view of the 32-byte command header from guest memory
-        const cmd_list_buffer = mem8.subarray(entry_addr, entry_addr + 32);
+        const cmd_list_buffer = this.controller.cpu.dma_read(entry_addr, 32);
         return new AHCICommandHeader(slot, cmd_list_buffer, 0);
     }
     
@@ -726,12 +722,10 @@ export class AHCICommandProcessor {
             }
         }
 
-        // Read from guest physical memory via cpu.mem8
-        // Command table size: 0x80 CFI area + prdtl * 16 bytes PRDT entries
+        // Read command table from guest physical memory via demand-paging-aware DMA
         const prdtl = cmd_header.prdtl;
         const tbl_size = 0x80 + prdtl * 16;
-        const mem8 = this.controller.cpu.mem8;
-        return mem8.subarray(ctba.low, ctba.low + tbl_size);
+        return this.controller.cpu.dma_read(ctba.low, tbl_size);
     }
     
     /**
@@ -840,12 +834,8 @@ export class AHCICommandProcessor {
         if (prdt_entries.length > 0) {
             const entry = prdt_entries[0];
             const dest_addr = entry.dba.low;
-            const xfer_size = Math.min(512, entry.dbc);  // dbc getter already returns (raw+1)
-            const mem8 = this.controller.cpu.mem8;
-            for (let i = 0; i < xfer_size; i++) {
-                mem8[dest_addr + i] = identify_bytes[i];
-            }
-            // Update prdbc (bytes transferred) in command header
+            const xfer_size = Math.min(512, entry.dbc);
+            this.controller.cpu.dma_write(dest_addr, identify_bytes, xfer_size);
             cmd_header.prdbc = xfer_size;
         }
 
@@ -1097,11 +1087,12 @@ export class AHCICommandProcessor {
     create_d2h_fis(lba = 0, count = 0) {
         const fb = this.port.fb;
         if (!fb) return;
-        const mem8 = this.controller.cpu.mem8;
         const fis_addr = fb + 0x40;  // D2H Register FIS offset in received FIS area
-        const fis_buf = mem8.subarray(fis_addr, fis_addr + 20);
+        // Build FIS in a local buffer, then DMA write to guest memory
+        const fis_buf = new Uint8Array(20);
         const fis = new RegisterFIS_D2H(fis_buf, 0);
         fis.set_success(lba, count);
+        this.controller.cpu.dma_write(fis_addr, fis_buf);
         dbg_log("AHCI Port " + this.port_num + ": Wrote D2H Register FIS to " + h(fis_addr), LOG_DISK);
     }
 
@@ -1112,20 +1103,18 @@ export class AHCICommandProcessor {
     create_sdb_fis(slot) {
         const fb = this.port.fb;
         if (!fb) return;
-        const mem8 = this.controller.cpu.mem8;
         const fis_addr = fb + 0x58;  // Set Device Bits FIS offset
-        // SDB FIS: type=0xA1, flags=0x40 (interrupt), status=0x00, error=0x00
-        // SACTive bits cleared for this slot
-        mem8[fis_addr + 0] = FIS_TYPE_DEV_BITS;  // 0xA1
-        mem8[fis_addr + 1] = 0x40;               // Interrupt bit
-        mem8[fis_addr + 2] = ATA_STATUS_DRDY | ATA_STATUS_DSC;
-        mem8[fis_addr + 3] = 0;
-        // DW1: SActive bits — clear the completing slot
+        const buf = new Uint8Array(8);
+        buf[0] = FIS_TYPE_DEV_BITS;  // 0xA1
+        buf[1] = 0x40;               // Interrupt bit
+        buf[2] = ATA_STATUS_DRDY | ATA_STATUS_DSC;
+        buf[3] = 0;
         const sact_clear = ~(1 << slot) >>> 0;
-        mem8[fis_addr + 4] = sact_clear & 0xFF;
-        mem8[fis_addr + 5] = (sact_clear >> 8) & 0xFF;
-        mem8[fis_addr + 6] = (sact_clear >> 16) & 0xFF;
-        mem8[fis_addr + 7] = (sact_clear >> 24) & 0xFF;
+        buf[4] = sact_clear & 0xFF;
+        buf[5] = (sact_clear >> 8) & 0xFF;
+        buf[6] = (sact_clear >> 16) & 0xFF;
+        buf[7] = (sact_clear >> 24) & 0xFF;
+        this.controller.cpu.dma_write(fis_addr, buf);
         dbg_log("AHCI Port " + this.port_num + ": Wrote Set Device Bits FIS for slot " + slot + " to " + h(fis_addr), LOG_DISK);
     }
     
@@ -1167,11 +1156,11 @@ export class AHCICommandProcessor {
     create_error_fis(error_code) {
         const fb = this.port.fb;
         if (!fb) return;
-        const mem8 = this.controller.cpu.mem8;
         const fis_addr = fb + 0x40;
-        const fis_buf = mem8.subarray(fis_addr, fis_addr + 20);
+        const fis_buf = new Uint8Array(20);
         const fis = new RegisterFIS_D2H(fis_buf, 0);
         fis.set_error(error_code);
+        this.controller.cpu.dma_write(fis_addr, fis_buf);
         dbg_log("AHCI Port " + this.port_num + ": Wrote error D2H FIS (err=" + h(error_code) + ") to " + h(fis_addr), LOG_DISK);
     }
     

@@ -413,12 +413,10 @@ export class AHCIDMAManager {
      * @param {number} size - Transfer size
      */
     async copy_from_memory(memory_addr, buffer, size) {
-        // Copy from guest physical memory via cpu.mem8 (flat guest address space)
+        // Copy from guest physical memory via demand-paging-aware DMA
         dbg_log("AHCI DMA: Copying " + size + " bytes from mem " + h(memory_addr) + " to DMA buffer", LOG_DISK);
-        const mem8 = this.cpu.mem8;
-        for (let i = 0; i < size; i++) {
-            buffer[i] = mem8[memory_addr + i];
-        }
+        const data = this.cpu.dma_read(memory_addr, size);
+        buffer.set(data.subarray(0, size));
     }
     
     /**
@@ -428,12 +426,9 @@ export class AHCIDMAManager {
      * @param {number} size - Transfer size
      */
     async copy_to_memory(buffer, memory_addr, size) {
-        // Copy to guest physical memory via cpu.mem8 (flat guest address space)
+        // Copy to guest physical memory via demand-paging-aware DMA
         dbg_log("AHCI DMA: Copying " + size + " bytes from DMA buffer to mem " + h(memory_addr), LOG_DISK);
-        const mem8 = this.cpu.mem8;
-        for (let i = 0; i < size; i++) {
-            mem8[memory_addr + i] = buffer[i];
-        }
+        this.cpu.dma_write(memory_addr, buffer, size);
     }
     
     /**
