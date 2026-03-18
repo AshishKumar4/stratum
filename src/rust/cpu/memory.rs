@@ -1,4 +1,4 @@
-mod ext {
+pub mod ext {
     extern "C" {
         pub fn mmap_read8(addr: u32) -> i32;
         pub fn mmap_read32(addr: u32) -> i32;
@@ -8,8 +8,25 @@ mod ext {
         pub fn mmap_write32(addr: u32, value: i32);
         pub fn mmap_write64(addr: u32, v0: i32, v1: i32);
         pub fn mmap_write128(addr: u32, v0: i32, v1: i32, v2: i32, v3: i32);
+
+        /// Demand-paging hook: swap a cold guest page into a WASM hot-pool frame.
+        ///
+        /// Called from `do_page_walk` when the resolved GPA >= PAGED_THRESHOLD.
+        /// The JS implementation (SqlPageStore.swapIn) reads 4 KB from DO SQLite
+        /// synchronously, copies it into an LRU frame in mem8[HOT_POOL_BASE..48MB],
+        /// and returns the WASM byte offset of that frame.
+        ///
+        /// Returns: WASM byte offset in [HOT_POOL_BASE, memory_size), or -1 on error.
+        /// do_page_walk substitutes this offset for `high` before building the TLB
+        /// entry — no other TLB mechanics change.
+        pub fn swap_page_in(gpa: u32) -> i32;
     }
 }
+
+/// GPA threshold above which pages are demand-paged from SQLite.
+/// Equals HOT_POOL_BASE used in do86/src/sql-page-store.ts.
+/// GPAs below this are always-resident in mem8[0..PAGED_THRESHOLD].
+pub const PAGED_THRESHOLD: u32 = 32 * 1024 * 1024; // 32 MB
 
 use crate::cpu::apic;
 use crate::cpu::cpu::{

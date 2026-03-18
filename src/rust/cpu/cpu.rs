@@ -1949,7 +1949,7 @@ pub unsafe fn do_page_walk(
     let global;
     let mut allow_user = true;
     let page = (addr as u32 >> 12) as i32;
-    let high;
+    let mut high;
 
     let cr0 = *cr;
     let cr4 = *cr.offset(4);
@@ -2113,6 +2113,24 @@ pub unsafe fn do_page_walk(
             }
         }
         dbg_assert!(found);
+    }
+
+    // ── Demand-paging: swap cold pages into WASM hot-pool frames ─────────────
+    // If `high` (the resolved GPA) is in the SQLite-backed range (≥ PAGED_THRESHOLD),
+    // call the JS swap hook, which synchronously loads the 4KB page from DO SQLite
+    // into an LRU frame inside mem8[HOT_POOL_BASE..memory_size] and returns the
+    // WASM byte offset of that frame.  We substitute the frame offset for `high`
+    // so the TLB entry (high + mem8_ptr) points directly into WASM linear memory —
+    // the exact same encoding the non-paged path uses.
+    if high >= memory::PAGED_THRESHOLD {
+        let frame_offset = unsafe { memory::ext::swap_page_in(high) };
+        if frame_offset >= 0 {
+            high = frame_offset as u32;
+        }
+        // On -1 (SqlPageStore error): fall through unchanged.  `high` remains a GPA
+        // ≥ PAGED_THRESHOLD which will trigger in_mapped_range (addr ≥ memory_size)
+        // → mmap_read8 handler → returns 0xFF.  Guest sees a bus error on that page
+        // rather than a silent wrong read — safe and debuggable.
     }
 
     let is_in_mapped_range = memory::in_mapped_range(high);

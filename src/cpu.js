@@ -296,6 +296,25 @@ CPU.prototype.mmap_write128 = function(addr, value0, value1, value2, value3)
 };
 
 /**
+ * Demand-paging WASM import handler — called from do_page_walk when GPA >= PAGED_THRESHOLD.
+ *
+ * Delegates to this._swap_page_in_hook if installed (set by do86/linux-vm.ts after
+ * emulator-loaded fires via SqlPageStore.swapIn).  Returns the WASM byte offset of the
+ * hot frame that now holds the 4KB page, or -1 if demand-paging is not active.
+ *
+ * @param {number} gpa  Guest physical address (page-aligned, >= PAGED_THRESHOLD)
+ * @returns {number}    WASM byte offset of hot frame, or -1
+ */
+CPU.prototype.swap_page_in = function(gpa)
+{
+    if(this._swap_page_in_hook)
+    {
+        return this._swap_page_in_hook(gpa) | 0;
+    }
+    return -1;
+};
+
+/**
  * @param {Array.<number>|Uint8Array} blob
  * @param {number} offset
  */
@@ -1024,6 +1043,11 @@ CPU.prototype.init = function(settings, device_bus)
 
     this.acpi_enabled[0] = +settings.acpi;
 
+    // Store logical_memory_size for CMOS/FW_CFG reporting.
+    // When demand-paging is active this exceeds memory_size[0] (the WASM allocation).
+    // Defaults to memory_size[0] so existing callers are unaffected.
+    this._logical_memory_size = settings.logical_memory_size || this.memory_size[0];
+
     this.reset_cpu();
 
     // Initialise SMP/APIC if the WASM was built with the SMP extension modules.
@@ -1165,7 +1189,8 @@ CPU.prototype.init = function(settings, device_bus)
         }
         else if(value === FW_CFG_RAM_SIZE)
         {
-            this.fw_value = i32(this.memory_size[0]);
+            // Report logical_memory_size (may exceed WASM allocation when demand-paging is active).
+            this.fw_value = i32(this._logical_memory_size || this.memory_size[0]);
         }
         else if(value === FW_CFG_NB_CPUS)
         {
@@ -1718,10 +1743,15 @@ CPU.prototype.fill_cmos = function(rtc, settings)
     rtc.cmos_write(CMOS_MEM_BASE_LOW, 640 & 0xFF);
     rtc.cmos_write(CMOS_MEM_BASE_HIGH, 640 >> 8);
 
+    // Use logical_memory_size for BIOS/CMOS reporting so the guest OS sees the full
+    // logical address space (including demand-paged pages backed by SQLite).
+    // When demand-paging is disabled, _logical_memory_size === memory_size[0].
+    var reported_mem = this._logical_memory_size || this.memory_size[0];
+
     var memory_above_1m = 0; // in k
-    if(this.memory_size[0] >= 1024 * 1024)
+    if(reported_mem >= 1024 * 1024)
     {
-        memory_above_1m = (this.memory_size[0] - 1024 * 1024) >> 10;
+        memory_above_1m = (reported_mem - 1024 * 1024) >> 10;
         memory_above_1m = Math.min(memory_above_1m, 0xFFFF);
     }
 
@@ -1731,9 +1761,9 @@ CPU.prototype.fill_cmos = function(rtc, settings)
     rtc.cmos_write(CMOS_MEM_EXTMEM_HIGH, memory_above_1m >> 8 & 0xFF);
 
     var memory_above_16m = 0; // in 64k blocks
-    if(this.memory_size[0] >= 16 * 1024 * 1024)
+    if(reported_mem >= 16 * 1024 * 1024)
     {
-        memory_above_16m = (this.memory_size[0] - 16 * 1024 * 1024) >> 16;
+        memory_above_16m = (reported_mem - 16 * 1024 * 1024) >> 16;
         memory_above_16m = Math.min(memory_above_16m, 0xFFFF);
     }
     rtc.cmos_write(CMOS_MEM_EXTMEM2_LOW, memory_above_16m & 0xFF);

@@ -86,6 +86,11 @@ export function V86(options)
             cpu.mmap_write128(addr, value0, value1, value2, value3);
         },
 
+        // Demand-paging hook: called from do_page_walk when GPA >= PAGED_THRESHOLD.
+        // Delegates to cpu._swap_page_in_hook (set by do86/linux-vm.ts after emulator-loaded).
+        // Returns the WASM byte offset of the hot frame, or -1 if paging is not enabled.
+        "swap_page_in": function(gpa) { return cpu.swap_page_in(gpa); },
+
         "log_from_wasm": function(offset, len) {
             const str = read_sized_string_from_mem(wasm_memory, offset, len);
             dbg_log(str, LOG_CPU);
@@ -214,6 +219,10 @@ V86.prototype.continue_init = async function(emulator, options)
     settings.load_devices = true;
     settings.memory_size = options.memory_size || 64 * 1024 * 1024;
     settings.vga_memory_size = options.vga_memory_size || 8 * 1024 * 1024;
+    // logical_memory_size: what the guest BIOS reports to the OS (may exceed memory_size
+    // when demand-paging is active — the difference is backed by DO SQLite via swap_page_in).
+    // Defaults to memory_size so existing callers are unaffected.
+    settings.logical_memory_size = options.logical_memory_size || settings.memory_size;
     settings.boot_order = boot_order;
     settings.fastboot = options.fastboot || false;
     settings.fda = undefined;
