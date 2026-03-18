@@ -1042,6 +1042,10 @@ CPU.prototype.create_memory = function(size, minimum_size)
  */
 CPU.prototype.init = function(settings, device_bus)
 {
+    // Set logical_memory_size BEFORE create_memory so the WASM allocation
+    // can grow to cover the full logical range (needed for pre-paging access).
+    this._logical_memory_size = settings.logical_memory_size || settings.memory_size || 64 * 1024 * 1024;
+
     this.create_memory(
         settings.memory_size || 64 * 1024 * 1024,
         settings.initrd ? 64 * 1024 * 1024 : 1024 * 1024,
