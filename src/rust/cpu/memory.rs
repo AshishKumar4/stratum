@@ -12,21 +12,32 @@ pub mod ext {
         /// Demand-paging hook: swap a cold guest page into a WASM hot-pool frame.
         ///
         /// Called from `do_page_walk` when the resolved GPA >= PAGED_THRESHOLD.
-        /// The JS implementation (SqlPageStore.swapIn) reads 4 KB from DO SQLite
-        /// synchronously, copies it into an LRU frame in mem8[HOT_POOL_BASE..48MB],
+        /// The JS implementation (SqlPageStore.swapPageIn) reads 4 KB from DO SQLite
+        /// synchronously, copies it into a Clock-algorithm frame in mem8[HOT_POOL_BASE..],
         /// and returns the WASM byte offset of that frame.
         ///
-        /// Returns: WASM byte offset in [HOT_POOL_BASE, memory_size), or -1 on error.
+        /// `for_writing`: non-zero if this TLB entry is being built for a write access.
+        /// The JS side uses this to immediately mark the frame dirty, enabling correct
+        /// flush-on-eviction without requiring a separate write-fault hook.
+        ///
+        /// Returns: WASM byte offset of the hot frame (always in [HOT_POOL_BASE, memory_size)),
+        /// or -1 on error (should never occur in practice).
         /// do_page_walk substitutes this offset for `high` before building the TLB
         /// entry — no other TLB mechanics change.
-        pub fn swap_page_in(gpa: u32) -> i32;
+        pub fn swap_page_in(gpa: u32, for_writing: i32) -> i32;
     }
 }
 
-/// GPA threshold above which pages are demand-paged from SQLite.
-/// Equals HOT_POOL_BASE used in do86/src/sql-page-store.ts.
-/// GPAs below this are always-resident in mem8[0..PAGED_THRESHOLD].
-pub const PAGED_THRESHOLD: u32 = 32 * 1024 * 1024; // 32 MB
+/// GPA threshold above which pages are demand-paged from DO SQLite.
+///
+/// Must equal VM_CONFIG.RESIDENT_MB × 1 MiB in do86/src/linux-vm.ts, and
+/// must equal the poolBase passed to SqlPageStore.setWasmHeap().
+/// GPAs in [0, PAGED_THRESHOLD) are permanently resident in mem8.
+/// GPAs in [PAGED_THRESHOLD, logical_memory_size) are served from the hot pool.
+///
+/// This is a compile-time constant (used in do_page_walk which is
+/// hot/JIT-compiled); change it here AND in VM_CONFIG together.
+pub const PAGED_THRESHOLD: u32 = 32 * 1024 * 1024; // 32 MB — matches VM_CONFIG.RESIDENT_MB
 
 use crate::cpu::apic;
 use crate::cpu::cpu::{

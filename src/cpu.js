@@ -299,17 +299,19 @@ CPU.prototype.mmap_write128 = function(addr, value0, value1, value2, value3)
  * Demand-paging WASM import handler — called from do_page_walk when GPA >= PAGED_THRESHOLD.
  *
  * Delegates to this._swap_page_in_hook if installed (set by do86/linux-vm.ts after
- * emulator-loaded fires via SqlPageStore.swapIn).  Returns the WASM byte offset of the
+ * emulator-loaded fires via SqlPageStore.swapPageIn).  Returns the WASM byte offset of the
  * hot frame that now holds the 4KB page, or -1 if demand-paging is not active.
  *
- * @param {number} gpa  Guest physical address (page-aligned, >= PAGED_THRESHOLD)
- * @returns {number}    WASM byte offset of hot frame, or -1
+ * @param {number} gpa          Guest physical address (page-aligned, >= PAGED_THRESHOLD)
+ * @param {number} for_writing  Non-zero when TLB entry is for a write access; page is
+ *                              immediately marked dirty so eviction flushes it correctly.
+ * @returns {number}            WASM byte offset of hot frame, or -1
  */
-CPU.prototype.swap_page_in = function(gpa)
+CPU.prototype.swap_page_in = function(gpa, for_writing)
 {
     if(this._swap_page_in_hook)
     {
-        return this._swap_page_in_hook(gpa) | 0;
+        return this._swap_page_in_hook(gpa, for_writing) | 0;
     }
     return -1;
 };
@@ -949,8 +951,9 @@ CPU.prototype.pack_memory = function()
 
 CPU.prototype.unpack_memory = function(bitmap, packed_memory)
 {
-    this.zero_memory(0, this.memory_size[0]);
-
+    // Skip blanket zero — WASM pages are zero-initialized by spec.
+    // Only write pages present in the bitmap. Untouched pages stay zero
+    // without committing physical memory (critical for DO 128MB limit).
     const page_count = this.memory_size[0] >> 12;
     let packed_page = 0;
 

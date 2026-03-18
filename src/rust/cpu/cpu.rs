@@ -2123,7 +2123,7 @@ pub unsafe fn do_page_walk(
     // so the TLB entry (high + mem8_ptr) points directly into WASM linear memory —
     // the exact same encoding the non-paged path uses.
     if high >= memory::PAGED_THRESHOLD {
-        let frame_offset = unsafe { memory::ext::swap_page_in(high) };
+        let frame_offset = unsafe { memory::ext::swap_page_in(high, for_writing as i32) };
         if frame_offset >= 0 {
             high = frame_offset as u32;
         }

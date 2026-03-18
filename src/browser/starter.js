@@ -88,8 +88,9 @@ export function V86(options)
 
         // Demand-paging hook: called from do_page_walk when GPA >= PAGED_THRESHOLD.
         // Delegates to cpu._swap_page_in_hook (set by do86/linux-vm.ts after emulator-loaded).
+        // for_writing: non-zero when the TLB entry is for a write — page store marks it dirty.
         // Returns the WASM byte offset of the hot frame, or -1 if paging is not enabled.
-        "swap_page_in": function(gpa) { return cpu.swap_page_in(gpa); },
+        "swap_page_in": function(gpa, for_writing) { return cpu.swap_page_in(gpa, for_writing); },
 
         "log_from_wasm": function(offset, len) {
             const str = read_sized_string_from_mem(wasm_memory, offset, len);
