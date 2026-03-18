@@ -1312,8 +1312,13 @@ CPU.prototype.init = function(settings, device_bus)
         this.devices.ide = new IDEController(this, device_bus, ide_config);
         this.devices.cdrom = this.devices.ide.secondary.master;
         
-        // Initialize AHCI controller for modern disk interface
-        this.devices.ahci = new AHCIController(this, device_bus);
+        // Initialize AHCI controller for modern disk interface.
+        // Pass disk options (ahci_disk_size, hda buffer) so init_default_disks
+        // can create the correct virtual disks.
+        this.devices.ahci = new AHCIController(this, device_bus, {
+            ahci_disk_size: settings.ahci_disk_size || 0,
+            hda: settings.ahci_hda || null,
+        });
 
         this.devices.pit = new PIT(this, device_bus);
 
