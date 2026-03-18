@@ -54,6 +54,12 @@ pub const protected_mode: *mut bool = 800 as *mut bool;
 pub const is_32: *mut bool = 804 as *mut bool;
 pub const stack_size_32: *mut bool = 808 as *mut bool;
 pub const memory_size: *mut u32 = 812 as *mut u32;
+/// Logical memory size the guest sees (via e820/multiboot).  When demand-paging
+/// is active this exceeds memory_size (the WASM allocation).  The demand pager
+/// intercepts GPAs in [PAGED_THRESHOLD, logical_memory_size) and routes them
+/// through the hot pool.  Addresses >= logical_memory_size are MMIO.
+/// Set from JS during cpu.init(); defaults to memory_size if unset (0).
+pub const logical_memory_size: *mut u32 = 1132 as *mut u32;
 pub const fpu_stack_empty: *mut u8 = 816 as *mut u8;
 pub const mxcsr: *mut i32 = 824 as *mut i32;
 

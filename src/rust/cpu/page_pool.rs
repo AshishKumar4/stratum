@@ -37,10 +37,16 @@ use crate::cpu::memory::PAGED_THRESHOLD;
 // ── Table sizing ─────────────────────────────────────────────────────────────
 
 /// Maximum guest physical address covered by the pool map, in pages.
-/// 65536 pages × 4 KB = 256 MB.  Enough for any guest we currently support.
-const MAX_PAGES: usize = 65536; // 256 MB / 4 KB
+/// 1048576 pages × 4 KB = 4 GB — full 32-bit address space.
+/// FRAME_MAP costs 4 MB, REF_MAP costs 1 MB.  Both are zero-initialized
+/// (BSS segment) so they don't inflate the WASM binary.
+const MAX_PAGES: usize = 1048576; // 4 GB / 4 KB
 
-const UNMAPPED: i32 = -1;
+/// Sentinel for "page not in pool".  We use 0 instead of -1 so that the
+/// static FRAME_MAP array is zero-initialized (BSS segment, no binary bloat).
+/// Frame offsets are always >= PAGED_THRESHOLD (32 MB), so 0 is never a valid
+/// frame offset.
+const UNMAPPED: i32 = 0;
 
 // ── Static tables ─────────────────────────────────────────────────────────────
 

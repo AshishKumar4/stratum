@@ -47,7 +47,7 @@ use crate::cpu::cpu::{
 // AHCI memory addresses (from Phase 4 design)
 pub const AHCI_MEM_ADDRESS: u32 = 0xFEA00000;
 pub const AHCI_MEM_SIZE: u32 = 0x1000;
-use crate::cpu::global_pointers::memory_size;
+use crate::cpu::global_pointers::{memory_size, logical_memory_size};
 use crate::cpu::ioapic;
 use crate::cpu::vga;
 use crate::jit;
@@ -102,9 +102,19 @@ pub fn svga_allocate_memory(size: u32) -> u32 {
     ptr as u32
 }
 
+/// Returns true if `addr` is in a memory-mapped I/O range (not regular RAM).
+///
+/// When logical_memory_size is set (demand-paging active), the RAM/MMIO boundary
+/// is at logical_memory_size rather than memory_size.  Addresses in
+/// [memory_size, logical_memory_size) are demand-paged RAM, NOT MMIO.
 #[no_mangle]
 pub fn in_mapped_range(addr: u32) -> bool {
-    return addr >= 0xA0000 && addr < 0xC0000 || addr >= unsafe { *memory_size };
+    if addr >= 0xA0000 && addr < 0xC0000 {
+        return true;
+    }
+    let logical = unsafe { *logical_memory_size };
+    let boundary = if logical > 0 { logical } else { unsafe { *memory_size } };
+    addr >= boundary
 }
 
 pub const VGA_LFB_ADDRESS: u32 = 0xE0000000;

@@ -74,6 +74,7 @@ export function CPU(bus, wm, stop_idling)
     this.wasm_memory = memory;
 
     this.memory_size = view(Uint32Array, memory, 812, 1);
+    this.wasm_logical_memory_size = view(Uint32Array, memory, 1132, 1);
 
     this.mem8 = new Uint8Array(0);
     this.mem32s = new Int32Array(this.mem8.buffer);
@@ -1019,22 +1020,16 @@ CPU.prototype.create_memory = function(size, minimum_size)
 
     console.assert(this.memory_size[0] === 0, "Expected uninitialised memory");
 
-    // memory_size[0] controls in_mapped_range() and demand paging bounds.
-    // It stays at the original 'size' (e.g. 64 MB) so that addresses in
-    // [memory_size, logical_memory_size) are routed through MMIO handlers
-    // and the demand paging system continues to work correctly.
+    // memory_size[0] is the WASM allocation size.  It stays at the original
+    // 'size' (e.g. 64 MB).  The Rust in_mapped_range() now uses
+    // logical_memory_size as the RAM/MMIO boundary, so addresses in
+    // [memory_size, logical_memory_size) are demand-paged RAM, not MMIO.
     this.memory_size[0] = size;
 
-    // When logical_memory_size exceeds memory_size, grow the actual WASM
-    // allocation to cover the full logical range.  This prevents OOB traps
-    // when guest code accesses physical memory at high addresses before
-    // paging is enabled (e.g. multiboot kernels probing RAM).  WASM pages
-    // are lazily backed — only touched pages consume real memory.
-    const alloc_size = Math.max(size, this._logical_memory_size || size);
-    const memory_offset = this.allocate_memory(alloc_size);
+    const memory_offset = this.allocate_memory(size);
 
-    this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, alloc_size);
-    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, alloc_size >> 2);
+    this.mem8 = view(Uint8Array, this.wasm_memory, memory_offset, size);
+    this.mem32s = view(Uint32Array, this.wasm_memory, memory_offset, size >> 2);
 };
 
 /**
@@ -1042,10 +1037,6 @@ CPU.prototype.create_memory = function(size, minimum_size)
  */
 CPU.prototype.init = function(settings, device_bus)
 {
-    // Set logical_memory_size BEFORE create_memory so the WASM allocation
-    // can grow to cover the full logical range (needed for pre-paging access).
-    this._logical_memory_size = settings.logical_memory_size || settings.memory_size || 64 * 1024 * 1024;
-
     this.create_memory(
         settings.memory_size || 64 * 1024 * 1024,
         settings.initrd ? 64 * 1024 * 1024 : 1024 * 1024,
@@ -1060,10 +1051,11 @@ CPU.prototype.init = function(settings, device_bus)
 
     this.acpi_enabled[0] = +settings.acpi;
 
-    // Store logical_memory_size for CMOS/FW_CFG reporting.
-    // When demand-paging is active this exceeds memory_size[0] (the WASM allocation).
-    // Defaults to memory_size[0] so existing callers are unaffected.
+    // Store logical_memory_size for CMOS/FW_CFG reporting AND write it into
+    // the WASM global so Rust in_mapped_range() and do_page_walk() use it as
+    // the RAM/MMIO boundary for demand paging.
     this._logical_memory_size = settings.logical_memory_size || this.memory_size[0];
+    this.wasm_logical_memory_size[0] = this._logical_memory_size;
 
     this.reset_cpu();
 

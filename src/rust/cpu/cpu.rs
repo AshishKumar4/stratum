@@ -2130,18 +2130,14 @@ pub unsafe fn do_page_walk(
     // by the frame offset so (high + mem8_ptr) points directly into WASM linear
     // memory — identical encoding to non-paged resident pages.
     //
-    // CRITICAL: Only demand-page GPAs in [PAGED_THRESHOLD, memory_size).
-    // GPAs >= memory_size are MMIO space (VGA LFB at 0xE0000000, APIC, HPET…).
-    // Without this bound, a VGA LFB write faults into do_page_walk, swap_page_in
-    // allocates a hot-pool frame for it, and the JIT builds a TLB entry pointing
-    // into mem8[frame_offset] — a normal RAM path that bypasses mmap_write32
-    // entirely. The VGA dirty bitmap (vga::mark_dirty) is never called, so
-    // svga_fill_pixel_buffer finds nothing dirty and the screen never updates.
-    // Bounding by memory_size lets MMIO GPAs fall through to in_mapped_range →
-    // TLB_IN_MAPPED_RANGE → mmap_write32 → vga::mark_dirty, restoring correct
-    // dirty tracking and screen updates.
-    let mem_size = unsafe { *memory_size };
-    if high >= memory::PAGED_THRESHOLD && high < mem_size {
+    // Demand-page GPAs in [PAGED_THRESHOLD, logical_boundary).
+    // The logical boundary is logical_memory_size when demand-paging is active
+    // (set from JS), otherwise memory_size.  Addresses >= logical_boundary are
+    // MMIO (VGA LFB, APIC, AHCI, HPET…) and must NOT be demand-paged — they
+    // need to reach mmap_write32 → device handlers → vga::mark_dirty etc.
+    let logical = unsafe { *logical_memory_size };
+    let logical_boundary = if logical > 0 { logical } else { unsafe { *memory_size } };
+    if high >= memory::PAGED_THRESHOLD && high < logical_boundary {
         let pool_offset = unsafe { crate::cpu::page_pool::pool_lookup(high) };
         let frame_offset = if pool_offset >= 0 {
             pool_offset
