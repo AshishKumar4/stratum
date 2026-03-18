@@ -14,6 +14,7 @@ pub mod ioapic;
 pub mod ioapic_smp;
 pub mod memory;
 pub mod misc_instr;
+pub mod page_pool;
 pub mod modrm;
 pub mod pic;
 pub mod sse_instr;

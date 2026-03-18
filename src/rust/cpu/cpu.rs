@@ -2116,14 +2116,27 @@ pub unsafe fn do_page_walk(
     }
 
     // ── Demand-paging: swap cold pages into WASM hot-pool frames ─────────────
-    // If `high` (the resolved GPA) is in the SQLite-backed range (≥ PAGED_THRESHOLD),
-    // call the JS swap hook, which synchronously loads the 4KB page from DO SQLite
-    // into an LRU frame inside mem8[HOT_POOL_BASE..memory_size] and returns the
-    // WASM byte offset of that frame.  We substitute the frame offset for `high`
-    // so the TLB entry (high + mem8_ptr) points directly into WASM linear memory —
-    // the exact same encoding the non-paged path uses.
+    // Two-level lookup to eliminate WASM→JS FFI on TLB-miss hot pages:
+    //
+    // 1. pool_lookup(high): pure WASM array read, O(1), no FFI.
+    //    Returns the WASM byte offset if the frame is in the hot pool (warm miss).
+    //    Also sets the reference bit for the Clock eviction algorithm.
+    //
+    // 2. Only on pool miss (cold miss): call JS swap_page_in, which loads the
+    //    4 KB page from DO SQLite, places it in a Clock frame, calls pool_register
+    //    to update FRAME_MAP, and returns the WASM frame offset.
+    //
+    // The TLB entry is built the same way regardless of path: `high` is replaced
+    // by the frame offset so (high + mem8_ptr) points directly into WASM linear
+    // memory — identical encoding to non-paged resident pages.
     if high >= memory::PAGED_THRESHOLD {
-        let frame_offset = unsafe { memory::ext::swap_page_in(high, for_writing as i32) };
+        let pool_offset = unsafe { crate::cpu::page_pool::pool_lookup(high) };
+        let frame_offset = if pool_offset >= 0 {
+            pool_offset
+        } else {
+            // Cold miss: cross to JS, which loads from SQLite and calls pool_register.
+            unsafe { memory::ext::swap_page_in(high, for_writing as i32) }
+        };
         if frame_offset >= 0 {
             high = frame_offset as u32;
         }
