@@ -1929,16 +1929,19 @@ CPU.prototype.codegen_finalize = function(wasm_table_index, start, state_flags, 
         {
             this.test_hook_did_finalize_wasm(code);
         }
-    });
+    }).catch(err => {
+        // Always reset the compiling flag on failure so future JIT compilations
+        // are not permanently blocked.  Without this, if WebAssembly.instantiate
+        // rejects (e.g. in workerd local dev), codegen_finalize_finished is never
+        // called → ctx.compiling stays true → all future JIT is dead.
+        this.codegen_finalize_finished(wasm_table_index, start, state_flags);
 
-    if(DEBUG)
-    {
-        result.catch(e => {
-            console.log(e);
+        if(DEBUG)
+        {
+            console.log(err);
             debugger;
-            throw e;
-        });
-    }
+        }
+    });
 };
 
 CPU.prototype.log_uncompiled_code = function(start, end)
