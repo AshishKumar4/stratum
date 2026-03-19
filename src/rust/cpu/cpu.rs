@@ -3168,8 +3168,11 @@ unsafe fn jit_run_interpreted(mut phys_addr: u32) {
         // JS port handlers that call v86.microtick(), which reads the global
         // instruction_counter to derive synthetic time.  Without this flush,
         // microtick sees a stale counter (delta=0) for all I/O within the
-        // interpreter batch, breaking PIT ref_toggle timing and causing
-        // KolibriOS boot hangs.
+        // interpreter batch, breaking PIT ref_toggle timing.
+        //
+        // Cost: one WASM i32.store per instruction — negligible vs run_instruction().
+        // JIT-compiled I/O opcodes flush via gen_update_instruction_counter()
+        // before calling the JS handler; this covers the interpreter path.
         *instruction_counter = initial_instruction_counter + i;
         i += 1;
 

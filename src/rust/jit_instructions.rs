@@ -4982,6 +4982,12 @@ fn gen_string_ins(ctx: &mut JitContext, ins: String, size: u8, prefix: u8) {
     );
 
     codegen::gen_move_registers_from_locals_to_memory(ctx);
+    // Flush instruction counter before I/O string ops (INS/OUTS) so that
+    // JS port handlers calling microtick() see an up-to-date counter.
+    // Non-I/O string ops (MOVS, CMPS, STOS, LODS, SCAS) skip this.
+    if ins == String::INS || ins == String::OUTS {
+        codegen::gen_update_instruction_counter(ctx);
+    }
     if args == 1 {
         ctx.builder.call_fn1(&name)
     }
