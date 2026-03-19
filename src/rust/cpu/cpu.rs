@@ -3150,7 +3150,8 @@ unsafe fn jit_run_interpreted(mut phys_addr: u32) {
     dbg_assert!(!memory::in_mapped_range(phys_addr));
 
     jit_block_boundary = false;
-    let mut i = 0;
+    let mut i: u32 = 0;
+    let initial_instruction_counter = *instruction_counter;
 
     loop {
         if CHECK_MISSED_ENTRY_POINTS {
@@ -3162,7 +3163,16 @@ unsafe fn jit_run_interpreted(mut phys_addr: u32) {
             }
         }
 
+        // Flush accumulated instruction count to the global counter BEFORE
+        // dispatching the instruction.  I/O instructions (IN/OUT) trigger
+        // JS port handlers that call v86.microtick(), which reads the global
+        // instruction_counter to derive synthetic time.  Without this flush,
+        // microtick sees a stale counter (delta=0) for all I/O within the
+        // interpreter batch, breaking PIT ref_toggle timing and causing
+        // KolibriOS boot hangs.
+        *instruction_counter = initial_instruction_counter + i;
         i += 1;
+
         let start_eip = *instruction_pointer;
         let opcode = *memory::mem8.offset(phys_addr as isize) as i32;
         *instruction_pointer += 1;
@@ -3188,7 +3198,10 @@ unsafe fn jit_run_interpreted(mut phys_addr: u32) {
         debug_last_jump = LastJump::Interpreted { phys_addr };
     }
 
-    *instruction_counter += i;
+    // Final flush — i was incremented but the last iteration's count
+    // wasn't written yet (the flush happens before run_instruction,
+    // so the i+=1 for the last iteration needs one more write).
+    *instruction_counter = initial_instruction_counter + i;
 }
 
 #[no_mangle]
