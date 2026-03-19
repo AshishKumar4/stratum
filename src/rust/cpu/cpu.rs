@@ -70,6 +70,8 @@ pub union reg128 {
     pub u64: [u64; 2],
     pub f32: [f32; 4],
     pub f64: [f64; 2],
+    #[cfg(target_feature = "simd128")]
+    pub v128: core::arch::wasm32::v128,
 }
 
 pub const CHECK_MISSED_ENTRY_POINTS: bool = false;

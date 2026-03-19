@@ -31,6 +31,9 @@ use crate::cpu::misc_instr::{lar, lsl, verr, verw};
 use crate::cpu::misc_instr::{lss16, lss32};
 use crate::cpu::sse_instr::*;
 
+#[cfg(target_feature = "simd128")]
+use core::arch::wasm32::*;
+
 #[no_mangle]
 pub unsafe fn instr16_0F00_0_mem(addr: i32) {
     // sldt
@@ -2332,13 +2335,20 @@ pub unsafe fn instr_0F64_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660F64(source: reg128, r: i32) {
     // pcmpgtb xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = if destination.i8[i] as i32 > source.i8[i] as i32 { 255 } else { 0 };
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i8x16_gt(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = if destination.i8[i] as i32 > source.i8[i] as i32 { 255 } else { 0 };
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660F64_reg(r1: i32, r2: i32) { instr_660F64(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660F64_mem(addr: i32, r: i32) {
@@ -2363,13 +2373,20 @@ pub unsafe fn instr_0F65_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660F65(source: reg128, r: i32) {
     // pcmpgtw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.u16[i] = if destination.i16[i] > source.i16[i] { 0xFFFF } else { 0 };
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_gt(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.u16[i] = if destination.i16[i] > source.i16[i] { 0xFFFF } else { 0 };
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660F65_reg(r1: i32, r2: i32) { instr_660F65(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660F65_mem(addr: i32, r: i32) {
@@ -2394,15 +2411,22 @@ pub unsafe fn instr_0F66_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660F66(source: reg128, r: i32) {
     // pcmpgtd xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    write_xmm128(
-        r,
-        if destination.i32[0] > source.i32[0] { -1 } else { 0 },
-        if destination.i32[1] > source.i32[1] { -1 } else { 0 },
-        if destination.i32[2] > source.i32[2] { -1 } else { 0 },
-        if destination.i32[3] > source.i32[3] { -1 } else { 0 },
-    );
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i32x4_gt(destination.v128, source.v128) });
+        return;
+    }
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        write_xmm128(
+            r,
+            if destination.i32[0] > source.i32[0] { -1 } else { 0 },
+            if destination.i32[1] > source.i32[1] { -1 } else { 0 },
+            if destination.i32[2] > source.i32[2] { -1 } else { 0 },
+            if destination.i32[3] > source.i32[3] { -1 } else { 0 },
+        );
+    }
 }
 pub unsafe fn instr_660F66_reg(r1: i32, r2: i32) { instr_660F66(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660F66_mem(addr: i32, r: i32) {
@@ -2882,13 +2906,20 @@ pub unsafe fn instr_0F74_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660F74(source: reg128, r: i32) {
     // pcmpeqb xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = if source.u8[i] == destination.u8[i] { 255 } else { 0 }
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i8x16_eq(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = if source.u8[i] == destination.u8[i] { 255 } else { 0 }
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660F74_reg(r1: i32, r2: i32) { instr_660F74(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660F74_mem(addr: i32, r: i32) {
@@ -2913,14 +2944,21 @@ pub unsafe fn instr_0F75_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660F75(source: reg128, r: i32) {
     // pcmpeqw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.u16[i] =
-            (if source.u16[i] as i32 == destination.u16[i] as i32 { 0xFFFF } else { 0 }) as u16;
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_eq(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.u16[i] =
+                (if source.u16[i] as i32 == destination.u16[i] as i32 { 0xFFFF } else { 0 }) as u16;
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660F75_reg(r1: i32, r2: i32) { instr_660F75(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660F75_mem(addr: i32, r: i32) {
@@ -2945,13 +2983,20 @@ pub unsafe fn instr_0F76_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660F76(source: reg128, r: i32) {
     // pcmpeqd xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..4 {
-        result.i32[i] = if source.u32[i] == destination.u32[i] { -1 } else { 0 }
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i32x4_eq(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..4 {
+            result.i32[i] = if source.u32[i] == destination.u32[i] { -1 } else { 0 }
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660F76_reg(r1: i32, r2: i32) { instr_660F76(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660F76_mem(addr: i32, r: i32) {
@@ -4050,12 +4095,19 @@ pub unsafe fn instr_0FD4_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FD4(source: reg128, r: i32) {
     // paddq xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    result.u64[0] = destination.u64[0] + source.u64[0];
-    result.u64[1] = destination.u64[1] + source.u64[1];
-    write_xmm_reg128(r, result);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i64x2_add(destination.v128, source.v128) });
+        return;
+    }
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        result.u64[0] = destination.u64[0] + source.u64[0];
+        result.u64[1] = destination.u64[1] + source.u64[1];
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FD4_reg(r1: i32, r2: i32) { instr_660FD4(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FD4_mem(addr: i32, r: i32) {
@@ -4080,13 +4132,20 @@ pub unsafe fn instr_0FD5_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FD5(source: reg128, r: i32) {
     // pmullw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.u16[i] = destination.u16[i] * source.u16[i]
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_mul(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.u16[i] = destination.u16[i] * source.u16[i]
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FD5_reg(r1: i32, r2: i32) { instr_660FD5(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FD5_mem(addr: i32, r: i32) {
@@ -4228,13 +4287,20 @@ pub unsafe fn instr_0FDA_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FDA(source: reg128, r: i32) {
     // pminub xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { u8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = u8::min(source.u8[i], destination.u8[i]);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: u8x16_min(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { u8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = u8::min(source.u8[i], destination.u8[i]);
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FDA_reg(r1: i32, r2: i32) { instr_660FDA(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FDA_mem(addr: i32, r: i32) {
@@ -4280,13 +4346,20 @@ pub unsafe fn instr_0FDC_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FDC(source: reg128, r: i32) {
     // paddusb xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = saturate_ud_to_ub(source.u8[i] as u32 + destination.u8[i] as u32);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: u8x16_add_sat(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = saturate_ud_to_ub(source.u8[i] as u32 + destination.u8[i] as u32);
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FDC_reg(r1: i32, r2: i32) { instr_660FDC(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FDC_mem(addr: i32, r: i32) {
@@ -4342,13 +4415,20 @@ pub unsafe fn instr_0FDE_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FDE(source: reg128, r: i32) {
     // pmaxub xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = u8::max(source.u8[i], destination.u8[i]);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: u8x16_max(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = u8::max(source.u8[i], destination.u8[i]);
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FDE_reg(r1: i32, r2: i32) { instr_660FDE(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FDE_mem(addr: i32, r: i32) {
@@ -4394,13 +4474,20 @@ pub unsafe fn instr_0FE0_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FE0(source: reg128, r: i32) {
     // pavgb xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = (destination.u8[i] as i32 + source.u8[i] as i32 + 1 >> 1) as u8;
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: u8x16_avgr(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = (destination.u8[i] as i32 + source.u8[i] as i32 + 1 >> 1) as u8;
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FE0_reg(r1: i32, r2: i32) { instr_660FE0(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FE0_mem(addr: i32, r: i32) {
@@ -4463,12 +4550,20 @@ pub unsafe fn instr_0FE3_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FE3(source: reg128, r: i32) {
     // pavgw xmm, xmm/m128
-    // XXX: Aligned access or #gp
-    let mut destination = read_xmm128s(r);
-    for i in 0..8 {
-        destination.u16[i] = (destination.u16[i] as i32 + source.u16[i] as i32 + 1 >> 1) as u16;
+    let destination = read_xmm128s(r);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: u16x8_avgr(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, destination);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = destination;
+        for i in 0..8 {
+            result.u16[i] = (destination.u16[i] as i32 + source.u16[i] as i32 + 1 >> 1) as u16;
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FE3_reg(r1: i32, r2: i32) { instr_660FE3(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FE3_mem(addr: i32, r: i32) {
@@ -4689,13 +4784,20 @@ pub unsafe fn instr_0FEA_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FEA(source: reg128, r: i32) {
     // pminsw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.i16[i] = i16::min(destination.i16[i], source.i16[i])
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_min(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.i16[i] = i16::min(destination.i16[i], source.i16[i])
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FEA_reg(r1: i32, r2: i32) { instr_660FEA(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FEA_mem(addr: i32, r: i32) {
@@ -4803,13 +4905,20 @@ pub unsafe fn instr_0FEE_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FEE(source: reg128, r: i32) {
     // pmaxsw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.i16[i] = i16::max(destination.i16[i], source.i16[i])
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_max(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.i16[i] = i16::max(destination.i16[i], source.i16[i])
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FEE_reg(r1: i32, r2: i32) { instr_660FEE(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FEE_mem(addr: i32, r: i32) {
@@ -5061,13 +5170,20 @@ pub unsafe fn instr_0FF8_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FF8(source: reg128, r: i32) {
     // psubb xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = destination.u8[i] - source.u8[i];
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i8x16_sub(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = destination.u8[i] - source.u8[i];
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FF8_reg(r1: i32, r2: i32) { instr_660FF8(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FF8_mem(addr: i32, r: i32) {
@@ -5092,13 +5208,20 @@ pub unsafe fn instr_0FF9_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FF9(source: reg128, r: i32) {
     // psubw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.i16[i] = destination.i16[i] - source.i16[i]
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_sub(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.i16[i] = destination.i16[i] - source.i16[i]
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FF9_reg(r1: i32, r2: i32) { instr_660FF9(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FF9_mem(addr: i32, r: i32) {
@@ -5123,15 +5246,22 @@ pub unsafe fn instr_0FFA_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FFA(source: reg128, r: i32) {
     // psubd xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    write_xmm128(
-        r,
-        destination.i32[0] - source.i32[0],
-        destination.i32[1] - source.i32[1],
-        destination.i32[2] - source.i32[2],
-        destination.i32[3] - source.i32[3],
-    );
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i32x4_sub(destination.v128, source.v128) });
+        return;
+    }
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        write_xmm128(
+            r,
+            destination.i32[0] - source.i32[0],
+            destination.i32[1] - source.i32[1],
+            destination.i32[2] - source.i32[2],
+            destination.i32[3] - source.i32[3],
+        );
+    }
 }
 pub unsafe fn instr_660FFA_reg(r1: i32, r2: i32) { instr_660FFA(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FFA_mem(addr: i32, r: i32) {
@@ -5150,11 +5280,19 @@ pub unsafe fn instr_0FFB_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FFB(source: reg128, r: i32) {
     // psubq xmm, xmm/m128
-    // XXX: Aligned access or #gp
-    let mut destination = read_xmm128s(r);
-    destination.u64[0] = destination.u64[0] - source.u64[0];
-    destination.u64[1] = destination.u64[1] - source.u64[1];
-    write_xmm_reg128(r, destination);
+    let destination = read_xmm128s(r);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i64x2_sub(destination.v128, source.v128) });
+        return;
+    }
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = destination;
+        result.u64[0] = destination.u64[0] - source.u64[0];
+        result.u64[1] = destination.u64[1] - source.u64[1];
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FFB_reg(r1: i32, r2: i32) { instr_660FFB(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FFB_mem(addr: i32, r: i32) {
@@ -5179,13 +5317,20 @@ pub unsafe fn instr_0FFC_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FFC(source: reg128, r: i32) {
     // paddb xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..16 {
-        result.u8[i] = destination.u8[i] + source.u8[i];
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i8x16_add(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..16 {
+            result.u8[i] = destination.u8[i] + source.u8[i];
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FFC_reg(r1: i32, r2: i32) { instr_660FFC(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FFC_mem(addr: i32, r: i32) {
@@ -5210,13 +5355,20 @@ pub unsafe fn instr_0FFD_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FFD(source: reg128, r: i32) {
     // paddw xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let mut result = reg128 { i8: [0; 16] };
-    for i in 0..8 {
-        result.u16[i] = (destination.u16[i] as i32 + source.u16[i] as i32 & 0xFFFF) as u16;
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i16x8_add(destination.v128, source.v128) });
+        return;
     }
-    write_xmm_reg128(r, result);
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        let mut result = reg128 { i8: [0; 16] };
+        for i in 0..8 {
+            result.u16[i] = (destination.u16[i] as i32 + source.u16[i] as i32 & 0xFFFF) as u16;
+        }
+        write_xmm_reg128(r, result);
+    }
 }
 pub unsafe fn instr_660FFD_reg(r1: i32, r2: i32) { instr_660FFD(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FFD_mem(addr: i32, r: i32) {
@@ -5241,13 +5393,22 @@ pub unsafe fn instr_0FFE_mem(addr: i32, r: i32) {
 #[no_mangle]
 pub unsafe fn instr_660FFE(source: reg128, r: i32) {
     // paddd xmm, xmm/m128
-    // XXX: Aligned access or #gp
     let destination = read_xmm128s(r);
-    let dword0 = destination.i32[0] + source.i32[0];
-    let dword1 = destination.i32[1] + source.i32[1];
-    let dword2 = destination.i32[2] + source.i32[2];
-    let dword3 = destination.i32[3] + source.i32[3];
-    write_xmm128(r, dword0, dword1, dword2, dword3);
+    #[cfg(target_feature = "simd128")]
+    {
+        write_xmm_reg128(r, reg128 { v128: i32x4_add(destination.v128, source.v128) });
+        return;
+    }
+    #[cfg(not(target_feature = "simd128"))]
+    {
+        write_xmm128(
+            r,
+            destination.i32[0] + source.i32[0],
+            destination.i32[1] + source.i32[1],
+            destination.i32[2] + source.i32[2],
+            destination.i32[3] + source.i32[3],
+        );
+    }
 }
 pub unsafe fn instr_660FFE_reg(r1: i32, r2: i32) { instr_660FFE(read_xmm128s(r1), r2); }
 pub unsafe fn instr_660FFE_mem(addr: i32, r: i32) {

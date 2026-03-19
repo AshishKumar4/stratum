@@ -2496,16 +2496,13 @@ VGAScreen.prototype.screen_fill_buffer = function()
 
         if(this.svga_bpp === 8)
         {
-            // XXX: Slow, should be ported to rust, but it doesn't have access to vga256_palette
-            // XXX: Doesn't take svga_offset into account
-            const buffer = new Int32Array(this.cpu.wasm_memory.buffer, this.dest_buffet_offset, this.screen_width * this.screen_height);
-            const svga_memory = new Uint8Array(this.cpu.wasm_memory.buffer, this.svga_memory.byteOffset, this.vga_memory_size);
+            // Copy JS palette into WASM memory, then call SIMD-accelerated Rust function
+            const palette_ptr = this.cpu.svga_palette_get_ptr();
+            const wasm_palette = new Int32Array(this.cpu.wasm_memory.buffer, palette_ptr, 256);
+            wasm_palette.set(this.vga256_palette);
 
-            for(var i = 0; i < buffer.length; i++)
-            {
-                var color = this.vga256_palette[svga_memory[i]];
-                buffer[i] = color & 0xFF00 | color << 16 | color >> 16 | 0xFF000000;
-            }
+            const pixel_count = this.screen_width * this.screen_height;
+            this.cpu.svga_fill_pixel_buffer_8bpp(pixel_count);
         }
         else
         {
