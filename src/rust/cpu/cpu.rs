@@ -2180,7 +2180,7 @@ pub unsafe fn do_page_walk(
     if high >= memory::PAGED_THRESHOLD && high < logical_boundary {
         let pool_offset = unsafe { crate::cpu::page_pool::pool_lookup(high) };
         // pool_lookup returns 0 (UNMAPPED) on miss, >0 on hit (valid frame offsets
-        // are always >= PAGED_THRESHOLD = 32 MB).  swap_page_in returns >0 on
+        // are always >= PAGED_THRESHOLD = 16 MB).  swap_page_in returns >0 on
         // success, -1 on error.
         let frame_offset = if pool_offset > 0 {
             pool_offset

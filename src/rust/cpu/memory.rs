@@ -37,7 +37,7 @@ pub mod ext {
 ///
 /// This is a compile-time constant (used in do_page_walk which is
 /// hot/JIT-compiled); change it here AND in VM_CONFIG together.
-pub const PAGED_THRESHOLD: u32 = 32 * 1024 * 1024; // 32 MB — matches VM_CONFIG.RESIDENT_MB
+pub const PAGED_THRESHOLD: u32 = 16 * 1024 * 1024; // 16 MB — matches VM_CONFIG.RESIDENT_MB
 
 use crate::cpu::apic;
 use crate::cpu::cpu::{

@@ -44,7 +44,7 @@ const MAX_PAGES: usize = 1048576; // 4 GB / 4 KB
 
 /// Sentinel for "page not in pool".  We use 0 instead of -1 so that the
 /// static FRAME_MAP array is zero-initialized (BSS segment, no binary bloat).
-/// Valid frame offsets are always >= PAGED_THRESHOLD (32 MB), so 0 is never
+/// Valid frame offsets are always >= PAGED_THRESHOLD (16 MB), so 0 is never
 /// a valid frame offset.  Callers must check `pool_lookup(gpa) > 0` (not >= 0).
 const UNMAPPED: i32 = 0;
 
